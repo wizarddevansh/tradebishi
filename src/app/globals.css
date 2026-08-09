@@ -1,26 +1,210 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #050505;
+  --foreground: #f5f5f7;
+
+  --muted: rgba(255, 255, 255, 0.45);
+  --muted-light: rgba(255, 255, 255, 0.65);
+
+  --glass: rgba(255, 255, 255, 0.055);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+
+  --border: rgba(255, 255, 255, 0.09);
+  --border-light: rgba(255, 255, 255, 0.14);
+
+  --success: #34d399;
+  --danger: #f87171;
+  --warning: #facc15;
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--background);
+  color-scheme: dark;
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
+  margin: 0;
+  min-height: 100vh;
+
+  background:
+    radial-gradient(
+      circle at 50% -10%,
+      rgba(255, 255, 255, 0.09),
+      transparent 38%
+    ),
+    radial-gradient(
+      circle at 100% 100%,
+      rgba(255, 255, 255, 0.025),
+      transparent 35%
+    ),
+    var(--background);
+
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Display",
+    "SF Pro Text",
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+textarea,
+select {
+  color-scheme: dark;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ---------- Premium utility classes ---------- */
+
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.glass:hover {
+  background: var(--glass-hover);
+  border-color: var(--border-light);
+}
+
+.premium-border {
+  border: 1px solid var(--border);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.muted-light {
+  color: var(--muted-light);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+/* ---------- Focus states ---------- */
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.045),
+    0 0 25px rgba(255, 255, 255, 0.025);
+}
+
+/* ---------- Button interaction ---------- */
+
+button {
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease,
+    box-shadow 160ms ease;
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+
+button:disabled {
+  opacity: 0.55;
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 700px) {
+  body {
+    background:
+      radial-gradient(
+        circle at 50% -10%,
+        rgba(255, 255, 255, 0.07),
+        transparent 45%
+      ),
+      var(--background);
+  }
 }
