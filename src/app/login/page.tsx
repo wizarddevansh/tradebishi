@@ -21,10 +21,10 @@ export default function LoginPage() {
 
     const supabase = createClient();
 
-    // 1. Sign in
-    const { data, error: loginError } =
+    // 1. Login through Supabase Auth
+    const { data: authData, error: loginError } =
       await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         password,
       });
 
@@ -34,8 +34,7 @@ export default function LoginPage() {
       return;
     }
 
-    // 2. Make sure we have a logged-in user
-    const user = data.user;
+    const user = authData.user;
 
     if (!user) {
       setError("Login failed. Please try again.");
@@ -43,71 +42,95 @@ export default function LoginPage() {
       return;
     }
 
-    // =========================================================
-    // 3. FIRST CHECK: ADMIN / TRADER
-    // =========================================================
+    // 2. Check whether this user is a MEMBER
+    // Members created from Admin > Members are linked
+    // through members.user_id and do not need a profiles row.
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name, role")
-      .eq("id", user.id)
+    const { data: member, error: memberError } = await supabase
+      .from("members")
+      .select("id, full_name, status")
+      .eq("user_id", user.id)
       .maybeSingle();
 
-    // Admin
-    if (profile?.role === "admin") {
-      router.replace("/admin");
-      router.refresh();
-      return;
-    }
-
-    // Trader
-    if (profile?.role === "trader") {
-      router.replace("/trader");
-      router.refresh();
-      return;
-    }
-if (profile?.role === "member") {
-  router.replace("/member");
-  router.refresh();
-  return;
-}
-    // =========================================================
-    // 4. SECOND CHECK: MEMBER
-    // =========================================================
-
-    const { data: member, error: memberError } =
-      await supabase
-        .from("members")
-        .select("id, full_name, status")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
     if (memberError) {
+      console.error("Member lookup error:", memberError);
+
+      await supabase.auth.signOut();
+
       setError(
         "Unable to verify your member account. Please try again."
       );
+
       setLoading(false);
       return;
     }
 
+    // 3. If member exists, send them to member dashboard
     if (member) {
       if (member.status !== "active") {
+        await supabase.auth.signOut();
+
         setError(
           "Your member account is not active. Please contact the administrator."
         );
+
         setLoading(false);
         return;
       }
 
-      // Member dashboard
-      router.replace("/");
+      router.replace("/member");
       router.refresh();
+
       return;
     }
 
-    // =========================================================
-    // 5. NO VALID ACCOUNT TYPE
-    // =========================================================
+    // 4. If not a member, check profiles for Admin/Trader
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, full_name, role")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Profile lookup error:", profileError);
+
+      await supabase.auth.signOut();
+
+      setError(
+        "Unable to verify your account role. Please try again."
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    // 5. Admin
+    if (profile?.role === "admin") {
+      router.replace("/admin");
+      router.refresh();
+
+      return;
+    }
+
+    // 6. Trader
+    if (profile?.role === "trader") {
+      router.replace("/trader");
+      router.refresh();
+
+      return;
+    }
+
+    // 7. Existing member profile compatibility
+    if (profile?.role === "member") {
+      router.replace("/member");
+      router.refresh();
+
+      return;
+    }
+
+    // 8. Unknown account
+    await supabase.auth.signOut();
 
     setError(
       "Your account is not registered as an Admin, Trader, or Member. Please contact the administrator."
@@ -201,7 +224,7 @@ if (profile?.role === "member") {
               type="email"
               placeholder="Email address"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(event) => setEmail(event.target.value)}
               style={inputStyle}
             />
           </div>
@@ -224,7 +247,7 @@ if (profile?.role === "member") {
               type="password"
               placeholder="Password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
               style={inputStyle}
             />
           </div>

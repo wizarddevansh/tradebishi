@@ -50,66 +50,145 @@ export default function MemberDashboard() {
   async function loadMember() {
     const supabase = createClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    setLoading(true);
+    setError("");
 
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    // Check profile
-    const { data: profile, error: profileError } =
-      await supabase
+      if (userError || !user) {
+        router.replace("/login");
+        return;
+      }
+
+      /*
+       * First try to find the user's profile.
+       *
+       * Profiles table:
+       * id = auth.users.id
+       * role = admin / trader / member
+       */
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
         .from("profiles")
-        .select("full_name, role")
+        .select("id, full_name, role")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
-    if (profileError || !profile) {
-      setError("Your account profile could not be found.");
-      setLoading(false);
-      return;
-    }
+      /*
+       * IMPORTANT:
+       *
+       * A member may have an Auth account and members row
+       * even if the profiles row was not created.
+       *
+       * Therefore, missing profile is NOT immediately fatal.
+       */
 
-    if (profile.role !== "member") {
-      router.replace("/");
-      return;
-    }
+      if (profileError) {
+        console.error(
+          "Profile lookup error:",
+          profileError
+        );
+      }
 
-    setUserName(profile.full_name || "Member");
+      if (profile) {
+        if (
+          profile.role !== "member"
+        ) {
+          router.replace("/");
+          return;
+        }
 
-    // Load member record
-    const { data: memberData, error: memberError } =
-      await supabase
+        setUserName(
+          profile.full_name ||
+            user.email ||
+            "Member"
+        );
+      }
+
+      /*
+       * Find member record using Auth user ID.
+       */
+      const {
+        data: memberData,
+        error: memberError,
+      } = await supabase
         .from("members")
         .select(
-          `
-          id,
-          full_name,
-          phone,
-          investment_amount,
-          profit_share,
-          status
-          `
+          "id, full_name, phone, investment_amount, profit_share, status"
         )
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-    if (memberError || !memberData) {
-      setError(
-        "Your member account could not be found. Please contact the administrator."
+      if (memberError) {
+        console.error(
+          "Member lookup error:",
+          memberError
+        );
+
+        setError(
+          "Unable to load your member account."
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      /*
+       * The member record is the important source
+       * for the member dashboard.
+       */
+      if (!memberData) {
+        setError(
+          "Your member account could not be found. Please contact the administrator."
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      /*
+       * If there is no profile, we can still use
+       * the member's full name.
+       */
+      if (!profile) {
+        setUserName(
+          memberData.full_name ||
+            user.email ||
+            "Member"
+        );
+      }
+
+      /*
+       * Check account status.
+       */
+      if (
+        memberData.status !== "active"
+      ) {
+        setError(
+          "Your member account is not active. Please contact the administrator."
+        );
+
+        setLoading(false);
+        return;
+      }
+
+      setMember(
+        memberData as Member
       );
-      setLoading(false);
-      return;
-    }
 
-    setMember(memberData as Member);
-
-    // Load pooled trades
-    const { data: tradeData, error: tradeError } =
-      await supabase
+      /*
+       * Load pooled trades.
+       */
+      const {
+        data: tradeData,
+        error: tradeError,
+      } = await supabase
         .from("trades")
         .select(
           `
@@ -127,15 +206,32 @@ export default function MemberDashboard() {
           ascending: false,
         });
 
-    if (tradeError) {
-      setError(
-        "Unable to load pooled trading activity."
-      );
-    } else {
-      setTrades((tradeData ?? []) as Trade[]);
-    }
+      if (tradeError) {
+        console.error(
+          "Trade loading error:",
+          tradeError
+        );
 
-    setLoading(false);
+        setError(
+          "Unable to load pooled trading activity."
+        );
+      } else {
+        setTrades(
+          (tradeData ?? []) as Trade[]
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Member dashboard error:",
+        error
+      );
+
+      setError(
+        "Something went wrong while loading your account."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function logout() {
@@ -144,48 +240,69 @@ export default function MemberDashboard() {
     await supabase.auth.signOut();
 
     router.replace("/login");
+    router.refresh();
   }
 
-  function formatCurrency(value: number) {
-    return `₹${Number(value || 0).toLocaleString(
-      "en-IN",
-      {
-        maximumFractionDigits: 2,
-      }
-    )}`;
+  function formatCurrency(
+    value: number
+  ) {
+    return `₹${Number(
+      value || 0
+    ).toLocaleString("en-IN", {
+      maximumFractionDigits: 2,
+    })}`;
   }
 
-  const totalTradeValue = trades.reduce(
-    (sum, trade) =>
-      sum + Number(trade.total_amount || 0),
-    0
-  );
+  const totalTradeValue =
+    trades.reduce(
+      (sum, trade) =>
+        sum +
+        Number(
+          trade.total_amount || 0
+        ),
+      0
+    );
 
-  const buyTrades = trades.filter(
-    (trade) =>
-      trade.trade_type.toLowerCase() === "buy"
-  );
+  const buyTrades =
+    trades.filter(
+      (trade) =>
+        trade.trade_type
+          .toLowerCase() === "buy"
+    );
 
-  const sellTrades = trades.filter(
-    (trade) =>
-      trade.trade_type.toLowerCase() === "sell"
-  );
+  const sellTrades =
+    trades.filter(
+      (trade) =>
+        trade.trade_type
+          .toLowerCase() === "sell"
+    );
 
-  const totalBuyValue = buyTrades.reduce(
-    (sum, trade) =>
-      sum + Number(trade.total_amount || 0),
-    0
-  );
+  const totalBuyValue =
+    buyTrades.reduce(
+      (sum, trade) =>
+        sum +
+        Number(
+          trade.total_amount || 0
+        ),
+      0
+    );
 
-  const totalSellValue = sellTrades.reduce(
-    (sum, trade) =>
-      sum + Number(trade.total_amount || 0),
-    0
-  );
+  const totalSellValue =
+    sellTrades.reduce(
+      (sum, trade) =>
+        sum +
+        Number(
+          trade.total_amount || 0
+        ),
+      0
+    );
 
-  const uniqueSymbols = new Set(
-    trades.map((trade) => trade.symbol)
-  ).size;
+  const uniqueSymbols =
+    new Set(
+      trades.map(
+        (trade) => trade.symbol
+      )
+    ).size;
 
   if (loading) {
     return (
@@ -207,13 +324,17 @@ export default function MemberDashboard() {
         >
           <Lock
             size={32}
-            style={{ marginBottom: "15px" }}
+            style={{
+              marginBottom: "15px",
+            }}
           />
 
           <h2>{error}</h2>
 
           <button
-            onClick={() => router.replace("/login")}
+            onClick={() =>
+              router.replace("/login")
+            }
             style={primaryButton}
           >
             Back to Login
@@ -241,7 +362,8 @@ export default function MemberDashboard() {
             </h1>
 
             <p style={subtitleStyle}>
-              View your investment and pooled trading activity.
+              View your investment and
+              pooled trading activity.
             </p>
           </div>
 
@@ -264,7 +386,8 @@ export default function MemberDashboard() {
             title="Your Investment"
             value={formatCurrency(
               Number(
-                member?.investment_amount || 0
+                member?.investment_amount ||
+                  0
               )
             )}
           />
@@ -298,9 +421,13 @@ export default function MemberDashboard() {
         <div style={summaryGrid}>
 
           <SummaryCard
-            icon={<ArrowUpRight size={17} />}
+            icon={
+              <ArrowUpRight size={17} />
+            }
             title="Pooled Buy Value"
-            value={formatCurrency(totalBuyValue)}
+            value={formatCurrency(
+              totalBuyValue
+            )}
             subtitle={`${buyTrades.length} ${
               buyTrades.length === 1
                 ? "buy"
@@ -310,9 +437,13 @@ export default function MemberDashboard() {
           />
 
           <SummaryCard
-            icon={<ArrowDownRight size={17} />}
+            icon={
+              <ArrowDownRight size={17} />
+            }
             title="Pooled Sell Value"
-            value={formatCurrency(totalSellValue)}
+            value={formatCurrency(
+              totalSellValue
+            )}
             subtitle={`${sellTrades.length} ${
               sellTrades.length === 1
                 ? "sell"
@@ -321,7 +452,9 @@ export default function MemberDashboard() {
           />
 
           <SummaryCard
-            icon={<BarChart3 size={17} />}
+            icon={
+              <BarChart3 size={17} />
+            }
             title="Stocks Traded"
             value={uniqueSymbols.toString()}
             subtitle="Unique symbols"
@@ -332,14 +465,19 @@ export default function MemberDashboard() {
         {/* MEMBER ACCOUNT */}
 
         <section style={sectionStyle}>
-          <div style={sectionHeaderStyle}>
+          <div
+            style={sectionHeaderStyle}
+          >
             <div>
               <h2 style={sectionTitle}>
                 Your Account
               </h2>
 
-              <p style={sectionSubtitle}>
-                Your cooperative investment information.
+              <p
+                style={sectionSubtitle}
+              >
+                Your cooperative
+                investment information.
               </p>
             </div>
 
@@ -348,16 +486,19 @@ export default function MemberDashboard() {
                 padding: "7px 11px",
                 borderRadius: "10px",
                 background:
-                  member?.status === "active"
+                  member?.status ===
+                  "active"
                     ? "rgba(52,211,153,0.1)"
                     : "rgba(248,113,113,0.1)",
                 color:
-                  member?.status === "active"
+                  member?.status ===
+                  "active"
                     ? "#34d399"
                     : "#f87171",
                 fontSize: "12px",
                 fontWeight: 600,
-                textTransform: "capitalize",
+                textTransform:
+                  "capitalize",
               }}
             >
               {member?.status}
@@ -368,19 +509,26 @@ export default function MemberDashboard() {
 
             <AccountItem
               label="Member Name"
-              value={member?.full_name || userName}
+              value={
+                member?.full_name ||
+                userName
+              }
             />
 
             <AccountItem
               label="Phone"
-              value={member?.phone || "Not provided"}
+              value={
+                member?.phone ||
+                "Not provided"
+              }
             />
 
             <AccountItem
               label="Investment"
               value={formatCurrency(
                 Number(
-                  member?.investment_amount || 0
+                  member?.investment_amount ||
+                    0
                 )
               )}
             />
@@ -388,7 +536,8 @@ export default function MemberDashboard() {
             <AccountItem
               label="Profit Share"
               value={`${Number(
-                member?.profit_share || 0
+                member?.profit_share ||
+                  0
               ).toFixed(2)}%`}
             />
 
@@ -399,14 +548,19 @@ export default function MemberDashboard() {
 
         <section style={sectionStyle}>
 
-          <div style={sectionHeaderStyle}>
+          <div
+            style={sectionHeaderStyle}
+          >
             <div>
               <h2 style={sectionTitle}>
                 Pooled Trades
               </h2>
 
-              <p style={sectionSubtitle}>
-                Trades executed on behalf of the cooperative pool.
+              <p
+                style={sectionSubtitle}
+              >
+                Trades executed on behalf
+                of the cooperative pool.
               </p>
             </div>
 
@@ -436,7 +590,8 @@ export default function MemberDashboard() {
               />
 
               <div>
-                No pooled trades have been recorded yet.
+                No pooled trades have
+                been recorded yet.
               </div>
 
               <p
@@ -446,8 +601,9 @@ export default function MemberDashboard() {
                   opacity: 0.7,
                 }}
               >
-                Trading activity will appear here when
-                your trader records a trade.
+                Trading activity will
+                appear here when your
+                trader records a trade.
               </p>
             </div>
           ) : (
@@ -462,7 +618,9 @@ export default function MemberDashboard() {
                 }}
               >
 
-                <div style={tableHeader}>
+                <div
+                  style={tableHeader}
+                >
                   <span>Symbol</span>
                   <span>Type</span>
                   <span>Quantity</span>
@@ -473,84 +631,97 @@ export default function MemberDashboard() {
 
                 <div style={tradeList}>
 
-                  {trades.map((trade) => {
+                  {trades.map(
+                    (trade) => {
+                      const isBuy =
+                        trade.trade_type
+                          .toLowerCase() ===
+                        "buy";
 
-                    const isBuy =
-                      trade.trade_type.toLowerCase() ===
-                      "buy";
-
-                    return (
-                      <div
-                        key={trade.id}
-                        style={tradeRow}
-                      >
-
-                        <strong>
-                          {trade.symbol}
-                        </strong>
-
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            width: "fit-content",
-                            padding: "5px 9px",
-                            borderRadius: "8px",
-                            background: isBuy
-                              ? "rgba(52,211,153,0.1)"
-                              : "rgba(248,113,113,0.1)",
-                            color: isBuy
-                              ? "#34d399"
-                              : "#f87171",
-                            fontSize: "12px",
-                            fontWeight: 600,
-                            textTransform:
-                              "capitalize",
-                          }}
+                      return (
+                        <div
+                          key={trade.id}
+                          style={tradeRow}
                         >
-                          {trade.trade_type}
-                        </span>
 
-                        <span>
-                          {Number(
-                            trade.quantity
-                          ).toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
+                          <strong>
+                            {trade.symbol}
+                          </strong>
 
-                        <span>
-                          {formatCurrency(
-                            Number(
-                              trade.price
-                            )
-                          )}
-                        </span>
+                          <span
+                            style={{
+                              display:
+                                "inline-flex",
+                              width:
+                                "fit-content",
+                              padding:
+                                "5px 9px",
+                              borderRadius:
+                                "8px",
+                              background:
+                                isBuy
+                                  ? "rgba(52,211,153,0.1)"
+                                  : "rgba(248,113,113,0.1)",
+                              color:
+                                isBuy
+                                  ? "#34d399"
+                                  : "#f87171",
+                              fontSize:
+                                "12px",
+                              fontWeight:
+                                600,
+                              textTransform:
+                                "capitalize",
+                            }}
+                          >
+                            {
+                              trade.trade_type
+                            }
+                          </span>
 
-                        <strong>
-                          {formatCurrency(
-                            Number(
-                              trade.total_amount
-                            )
-                          )}
-                        </strong>
+                          <span>
+                            {Number(
+                              trade.quantity
+                            ).toLocaleString(
+                              "en-IN"
+                            )}
+                          </span>
 
-                        <span
-                          style={{
-                            color:
-                              "rgba(255,255,255,0.4)",
-                            fontSize: "12px",
-                          }}
-                        >
-                          {new Date(
-                            trade.trade_date
-                          ).toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
+                          <span>
+                            {formatCurrency(
+                              Number(
+                                trade.price
+                              )
+                            )}
+                          </span>
 
-                      </div>
-                    );
-                  })}
+                          <strong>
+                            {formatCurrency(
+                              Number(
+                                trade.total_amount
+                              )
+                            )}
+                          </strong>
+
+                          <span
+                            style={{
+                              color:
+                                "rgba(255,255,255,0.4)",
+                              fontSize:
+                                "12px",
+                            }}
+                          >
+                            {new Date(
+                              trade.trade_date
+                            ).toLocaleString(
+                              "en-IN"
+                            )}
+                          </span>
+
+                        </div>
+                      );
+                    }
+                  )}
 
                 </div>
               </div>
@@ -560,13 +731,17 @@ export default function MemberDashboard() {
 
         {/* SECURITY NOTICE */}
 
-        <div style={securityNotice}>
+        <div
+          style={securityNotice}
+        >
           <Lock size={16} />
 
           <span>
-            Your account is read-only. You can view
-            cooperative trading activity but cannot
-            create, modify, or delete trades.
+            Your account is read-only.
+            You can view cooperative
+            trading activity but cannot
+            create, modify, or delete
+            trades.
           </span>
         </div>
 
@@ -674,7 +849,8 @@ function AccountItem({
           color:
             "rgba(255,255,255,0.35)",
           fontSize: "11px",
-          textTransform: "uppercase",
+          textTransform:
+            "uppercase",
           letterSpacing: "0.07em",
         }}
       >
@@ -723,10 +899,12 @@ const eyebrowStyle = {
   display: "flex",
   alignItems: "center",
   gap: "9px",
-  color: "rgba(255,255,255,0.45)",
+  color:
+    "rgba(255,255,255,0.45)",
   fontSize: "12px",
   letterSpacing: "3px",
-  textTransform: "uppercase" as const,
+  textTransform:
+    "uppercase" as const,
 };
 
 const titleStyle = {
@@ -736,7 +914,8 @@ const titleStyle = {
 };
 
 const subtitleStyle = {
-  color: "rgba(255,255,255,0.45)",
+  color:
+    "rgba(255,255,255,0.45)",
   marginTop: "7px",
   fontSize: "14px",
 };
@@ -838,13 +1017,15 @@ const tableHeader = {
   color:
     "rgba(255,255,255,0.35)",
   fontSize: "11px",
-  textTransform: "uppercase" as const,
+  textTransform:
+    "uppercase" as const,
   letterSpacing: "0.07em",
 };
 
 const tradeList = {
   display: "flex",
-  flexDirection: "column" as const,
+  flexDirection:
+    "column" as const,
   gap: "9px",
 };
 
@@ -864,7 +1045,8 @@ const tradeRow = {
 
 const emptyState = {
   padding: "50px 20px",
-  textAlign: "center" as const,
+  textAlign:
+    "center" as const,
   color:
     "rgba(255,255,255,0.4)",
   background:
