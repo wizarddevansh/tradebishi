@@ -15,6 +15,8 @@ import {
   Pencil,
   Trash2,
   Save,
+  Mail,
+  Lock,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
@@ -22,6 +24,7 @@ type Member = {
   id: string;
   user_id: string | null;
   full_name: string;
+  email: string | null;
   phone: string | null;
   investment_amount: number;
   profit_share: number;
@@ -31,6 +34,8 @@ type Member = {
 
 type MemberForm = {
   full_name: string;
+  email: string;
+  password: string;
   phone: string;
   investment_amount: string;
   profit_share: string;
@@ -39,6 +44,8 @@ type MemberForm = {
 
 const emptyForm: MemberForm = {
   full_name: "",
+  email: "",
+  password: "",
   phone: "",
   investment_amount: "0",
   profit_share: "0",
@@ -68,7 +75,6 @@ export default function AdminMembersPage() {
     useState<MemberForm>(emptyForm);
 
   const [saving, setSaving] = useState(false);
-
   const [deletingId, setDeletingId] =
     useState<string | null>(null);
 
@@ -77,68 +83,46 @@ export default function AdminMembersPage() {
   }, []);
 
   async function loadMembers() {
-    setError("");
+    try {
+      setError("");
 
-    const supabase = createClient();
+      const response = await fetch(
+        "/api/admin/members",
+        {
+          method: "GET",
+          cache: "no-store",
+        }
+      );
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      if (response.status === 401) {
+        router.replace("/login");
+        return;
+      }
 
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
+      if (response.status === 403) {
+        router.replace("/admin");
+        return;
+      }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
+      const result = await response.json();
 
-    if (
-      profileError ||
-      !profile ||
-      profile.role !== "admin"
-    ) {
-      router.replace("/");
-      return;
-    }
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Failed to load members."
+        );
+      }
 
-    const { data, error } = await supabase
-      .from("members")
-      .select(
-        "id, user_id, full_name, phone, investment_amount, profit_share, status, created_at"
-      )
-      .order("created_at", {
-        ascending: false,
-      });
-
-    if (error) {
-      setError(error.message);
+      setMembers(result.members || []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load members."
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const formattedMembers: Member[] =
-      (data ?? []).map((member) => ({
-        id: member.id,
-        user_id: member.user_id,
-        full_name: member.full_name,
-        phone: member.phone,
-        investment_amount: Number(
-          member.investment_amount || 0
-        ),
-        profit_share: Number(
-          member.profit_share || 0
-        ),
-        status: member.status,
-        created_at: member.created_at,
-      }));
-
-    setMembers(formattedMembers);
-    setLoading(false);
   }
 
   async function refreshMembers() {
@@ -160,7 +144,9 @@ export default function AdminMembersPage() {
   }
 
   function currency(value: number) {
-    return `₹${value.toLocaleString("en-IN", {
+    return `₹${Number(
+      value || 0
+    ).toLocaleString("en-IN", {
       maximumFractionDigits: 2,
     })}`;
   }
@@ -181,6 +167,8 @@ export default function AdminMembersPage() {
 
     setForm({
       full_name: member.full_name,
+      email: member.email ?? "",
+      password: "",
       phone: member.phone ?? "",
       investment_amount:
         member.investment_amount.toString(),
@@ -199,7 +187,6 @@ export default function AdminMembersPage() {
     setShowForm(false);
     setEditingMember(null);
     setForm(emptyForm);
-    setError("");
   }
 
   async function handleSaveMember(
@@ -211,25 +198,65 @@ export default function AdminMembersPage() {
     setError("");
     setSuccess("");
 
-    const fullName = form.full_name.trim();
-    const phone = form.phone.trim();
+    const fullName =
+      form.full_name.trim();
 
-    const investmentAmount = Number(
-      form.investment_amount
-    );
+    const email =
+      form.email.trim().toLowerCase();
 
-    const profitShare = Number(
-      form.profit_share
-    );
+    const password = form.password;
+
+    const phone =
+      form.phone.trim();
+
+    const investmentAmount =
+      Number(form.investment_amount);
+
+    const profitShare =
+      Number(form.profit_share);
 
     if (!fullName) {
-      setError("Full name is required.");
+      setError(
+        "Full name is required."
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (!editingMember && !email) {
+      setError(
+        "Email is required for a new member."
+      );
       setSaving(false);
       return;
     }
 
     if (
-      !Number.isFinite(investmentAmount) ||
+      !editingMember &&
+      !password
+    ) {
+      setError(
+        "Password is required for a new member."
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (
+      password &&
+      password.length < 6
+    ) {
+      setError(
+        "Password must be at least 6 characters."
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (
+      !Number.isFinite(
+        investmentAmount
+      ) ||
       investmentAmount < 0
     ) {
       setError(
@@ -251,63 +278,92 @@ export default function AdminMembersPage() {
       return;
     }
 
-    const supabase = createClient();
+    try {
+      const isEditing =
+        Boolean(editingMember);
 
-    if (editingMember) {
-      const { error } = await supabase
-        .from("members")
-        .update({
-          full_name: fullName,
-          phone: phone || null,
-          investment_amount: investmentAmount,
-          profit_share: profitShare,
-          status: form.status,
-        })
-        .eq("id", editingMember.id);
+      const body: Record<
+        string,
+        unknown
+      > = {
+        full_name: fullName,
+        email: email || undefined,
+        password:
+          password || undefined,
+        phone: phone || null,
+        investment_amount:
+          investmentAmount,
+        profit_share: profitShare,
+        status: form.status,
+      };
 
-      if (error) {
-        setError(error.message);
-        setSaving(false);
+      if (isEditing) {
+        body.id = editingMember!.id;
+      }
+
+      const response = await fetch(
+        "/api/admin/members",
+        {
+          method: isEditing
+            ? "PATCH"
+            : "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (response.status === 401) {
+        router.replace("/login");
         return;
       }
 
-      setSuccess(
-        `${fullName} was updated successfully.`
-      );
-    } else {
-      const { error } = await supabase
-        .from("members")
-        .insert({
-          full_name: fullName,
-          phone: phone || null,
-          investment_amount: investmentAmount,
-          profit_share: profitShare,
-          status: form.status,
-        });
-
-      if (error) {
-        setError(error.message);
-        setSaving(false);
+      if (response.status === 403) {
+        router.replace("/admin");
         return;
       }
 
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Failed to save member."
+        );
+      }
+
       setSuccess(
-        `${fullName} was added successfully.`
+        isEditing
+          ? `${fullName} was updated successfully.`
+          : `${fullName} was added successfully.`
       );
+
+      setShowForm(false);
+      setEditingMember(null);
+      setForm(emptyForm);
+
+      await loadMembers();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to save member."
+      );
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(false);
-    setShowForm(false);
-    setEditingMember(null);
-    setForm(emptyForm);
-
-    await loadMembers();
   }
 
-  async function deleteMember(member: Member) {
-    const confirmed = window.confirm(
-      `Delete ${member.full_name}?\n\nThis will permanently delete this member record.`
-    );
+  async function deleteMember(
+    member: Member
+  ) {
+    const confirmed =
+      window.confirm(
+        `Delete ${member.full_name}?\n\nThis will permanently delete the member record and their login account.`
+      );
 
     if (!confirmed) return;
 
@@ -315,42 +371,66 @@ export default function AdminMembersPage() {
     setError("");
     setSuccess("");
 
-    const supabase = createClient();
-
-    const { error } = await supabase
-      .from("members")
-      .delete()
-      .eq("id", member.id);
-
-    if (error) {
-      setError(
-        `Could not delete ${member.full_name}: ${error.message}`
+    try {
+      const response = await fetch(
+        `/api/admin/members?id=${encodeURIComponent(
+          member.id
+        )}`,
+        {
+          method: "DELETE",
+        }
       );
+
+      if (response.status === 401) {
+        router.replace("/login");
+        return;
+      }
+
+      if (response.status === 403) {
+        router.replace("/admin");
+        return;
+      }
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Failed to delete member."
+        );
+      }
+
+      setSelectedMember(null);
+
+      setSuccess(
+        `${member.full_name} was deleted successfully.`
+      );
+
+      await loadMembers();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete member."
+      );
+    } finally {
       setDeletingId(null);
-      return;
     }
-
-    setSelectedMember(null);
-
-    setSuccess(
-      `${member.full_name} was deleted successfully.`
-    );
-
-    setDeletingId(null);
-
-    await loadMembers();
   }
 
-  const filteredMembers = members.filter(
-    (member) => {
-      const query = search
-        .trim()
-        .toLowerCase();
+  const filteredMembers =
+    members.filter((member) => {
+      const query =
+        search.trim().toLowerCase();
 
       if (!query) return true;
 
       return (
         member.full_name
+          .toLowerCase()
+          .includes(query) ||
+        (member.email ?? "")
           .toLowerCase()
           .includes(query) ||
         (member.phone ?? "")
@@ -360,20 +440,24 @@ export default function AdminMembersPage() {
           .toLowerCase()
           .includes(query)
       );
-    }
-  );
+    });
 
-  const totalInvestment = members.reduce(
-    (sum, member) =>
-      sum + member.investment_amount,
-    0
-  );
+  const totalInvestment =
+    members.reduce(
+      (sum, member) =>
+        sum +
+        Number(
+          member.investment_amount || 0
+        ),
+      0
+    );
 
-  const activeMembers = members.filter(
-    (member) =>
-      member.status?.toLowerCase() ===
-      "active"
-  ).length;
+  const activeMembers =
+    members.filter(
+      (member) =>
+        member.status?.toLowerCase() ===
+        "active"
+    ).length;
 
   const inactiveMembers =
     members.length - activeMembers;
@@ -391,9 +475,6 @@ export default function AdminMembersPage() {
   return (
     <main style={pageStyle}>
       <div style={containerStyle}>
-
-        {/* HEADER */}
-
         <header style={headerStyle}>
           <div>
             <button
@@ -416,26 +497,27 @@ export default function AdminMembersPage() {
             </h1>
 
             <p style={subtitleStyle}>
-              Manage every registered investment
-              member from one place.
+              Manage every registered
+              investment member from one
+              place.
             </p>
           </div>
 
           <div style={headerActions}>
             <button
               type="button"
-              onClick={refreshMembers}
+              onClick={
+                refreshMembers
+              }
               disabled={refreshing}
               style={secondaryButton}
             >
               <RefreshCw
                 size={16}
                 style={{
-                  transform: refreshing
-                    ? "rotate(360deg)"
+                  animation: refreshing
+                    ? "spin 1s linear infinite"
                     : "none",
-                  transition:
-                    "transform 0.6s",
                 }}
               />
 
@@ -455,8 +537,6 @@ export default function AdminMembersPage() {
           </div>
         </header>
 
-        {/* MESSAGES */}
-
         {error && (
           <div style={errorBox}>
             {error}
@@ -468,8 +548,6 @@ export default function AdminMembersPage() {
             {success}
           </div>
         )}
-
-        {/* STATS */}
 
         <section style={statsGrid}>
           <StatCard
@@ -498,8 +576,6 @@ export default function AdminMembersPage() {
             icon={<Users size={20} />}
           />
         </section>
-
-        {/* MEMBER LIST */}
 
         <section style={mainCard}>
           <div style={sectionHeader}>
@@ -551,7 +627,9 @@ export default function AdminMembersPage() {
 
               <button
                 type="button"
-                onClick={openAddForm}
+                onClick={
+                  openAddForm
+                }
                 style={primaryButton}
               >
                 <Plus size={17} />
@@ -560,7 +638,8 @@ export default function AdminMembersPage() {
             </div>
           </div>
 
-          {filteredMembers.length === 0 ? (
+          {filteredMembers.length ===
+          0 ? (
             <div style={emptyState}>
               <Users
                 size={32}
@@ -571,15 +650,19 @@ export default function AdminMembersPage() {
               />
 
               <div>
-                {members.length === 0
+                {members.length ===
+                0
                   ? "No members found."
                   : "No members match your search."}
               </div>
 
-              {members.length === 0 && (
+              {members.length ===
+                0 && (
                 <button
                   type="button"
-                  onClick={openAddForm}
+                  onClick={
+                    openAddForm
+                  }
                   style={{
                     ...primaryButton,
                     margin:
@@ -610,7 +693,9 @@ export default function AdminMembersPage() {
                             member
                           )
                         }
-                        style={memberMainButton}
+                        style={
+                          memberMainButton
+                        }
                       >
                         <div
                           style={
@@ -621,7 +706,9 @@ export default function AdminMembersPage() {
                             style={avatar}
                           >
                             {member.full_name
-                              .charAt(0)
+                              .charAt(
+                                0
+                              )
                               .toUpperCase()}
                           </div>
 
@@ -637,8 +724,9 @@ export default function AdminMembersPage() {
                                 mutedText
                               }
                             >
-                              {member.phone ||
-                                "No phone number"}
+                              {member.email ||
+                                member.phone ||
+                                "No contact information"}
                             </p>
                           </div>
                         </div>
@@ -705,7 +793,9 @@ export default function AdminMembersPage() {
                                   : "rgba(250,204,21,0.08)",
                             }}
                           >
-                            {member.status}
+                            {
+                              member.status
+                            }
                           </span>
                         </div>
 
@@ -733,9 +823,7 @@ export default function AdminMembersPage() {
                       </button>
 
                       <div
-                        style={
-                          rowActions
-                        }
+                        style={rowActions}
                       >
                         <button
                           type="button"
@@ -744,9 +832,7 @@ export default function AdminMembersPage() {
                               member
                             )
                           }
-                          style={
-                            iconButton
-                          }
+                          style={iconButton}
                           title="Edit member"
                         >
                           <Pencil
@@ -795,8 +881,6 @@ export default function AdminMembersPage() {
         </p>
       </div>
 
-      {/* MEMBER DETAILS MODAL */}
-
       {selectedMember && (
         <div
           onMouseDown={(event) => {
@@ -826,7 +910,9 @@ export default function AdminMembersPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setSelectedMember(null)
+                  setSelectedMember(
+                    null
+                  )
                 }
                 style={closeButton}
               >
@@ -838,6 +924,14 @@ export default function AdminMembersPage() {
               label="Full Name"
               value={
                 selectedMember.full_name
+              }
+            />
+
+            <DetailRow
+              label="Email"
+              value={
+                selectedMember.email ||
+                "Not provided"
               }
             />
 
@@ -879,18 +973,22 @@ export default function AdminMembersPage() {
 
             <DetailRow
               label="Member ID"
-              value={selectedMember.id}
+              value={
+                selectedMember.id
+              }
             />
 
             <DetailRow
               label="User ID"
               value={
                 selectedMember.user_id ||
-                "Not linked to an account"
+                "Not linked"
               }
             />
 
-            <div style={modalActions}>
+            <div
+              style={modalActions}
+            >
               <button
                 type="button"
                 onClick={() =>
@@ -915,9 +1013,12 @@ export default function AdminMembersPage() {
                   deletingId ===
                   selectedMember.id
                 }
-                style={dangerButton}
+                style={
+                  dangerButton
+                }
               >
                 <Trash2 size={16} />
+
                 {deletingId ===
                 selectedMember.id
                   ? "Deleting..."
@@ -928,14 +1029,12 @@ export default function AdminMembersPage() {
         </div>
       )}
 
-      {/* ADD / EDIT MODAL */}
-
       {showForm && (
         <div
           onMouseDown={(event) => {
             if (
               event.target ===
-              event.currentTarget &&
+                event.currentTarget &&
               !saving
             ) {
               closeForm();
@@ -967,8 +1066,8 @@ export default function AdminMembersPage() {
                   }}
                 >
                   {editingMember
-                    ? "Update the member's information."
-                    : "Create a new member record."}
+                    ? "Update the member's information or login credentials."
+                    : "Create the member's investment record and login account."}
                 </p>
               </div>
 
@@ -983,7 +1082,9 @@ export default function AdminMembersPage() {
             </div>
 
             <form
-              onSubmit={handleSaveMember}
+              onSubmit={
+                handleSaveMember
+              }
               style={formStyle}
             >
               <label style={labelStyle}>
@@ -1001,6 +1102,70 @@ export default function AdminMembersPage() {
                   })
                 }
                 placeholder="Member full name"
+                style={inputStyle}
+              />
+
+              <label style={labelStyle}>
+                <span
+                  style={
+                    labelWithIcon
+                  }
+                >
+                  <Mail size={13} />
+                  Email
+                </span>
+              </label>
+
+              <input
+                required={!editingMember}
+                type="email"
+                autoComplete="email"
+                value={form.email}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    email:
+                      event.target.value,
+                  })
+                }
+                placeholder="member@example.com"
+                style={inputStyle}
+              />
+
+              <label style={labelStyle}>
+                <span
+                  style={
+                    labelWithIcon
+                  }
+                >
+                  <Lock size={13} />
+                  {editingMember
+                    ? "New Password"
+                    : "Password"}
+                </span>
+              </label>
+
+              <input
+                required={!editingMember}
+                type="password"
+                autoComplete={
+                  editingMember
+                    ? "new-password"
+                    : "new-password"
+                }
+                value={form.password}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    password:
+                      event.target.value,
+                  })
+                }
+                placeholder={
+                  editingMember
+                    ? "Leave blank to keep current password"
+                    : "Minimum 6 characters"
+                }
                 style={inputStyle}
               />
 
@@ -1054,7 +1219,9 @@ export default function AdminMembersPage() {
                 min="0"
                 max="100"
                 step="0.01"
-                value={form.profit_share}
+                value={
+                  form.profit_share
+                }
                 onChange={(event) =>
                   setForm({
                     ...form,
@@ -1108,8 +1275,9 @@ export default function AdminMembersPage() {
                   justifyContent:
                     "center",
                   marginTop: "5px",
-                  opacity:
-                    saving ? 0.6 : 1,
+                  opacity: saving
+                    ? 0.6
+                    : 1,
                 }}
               >
                 {saving ? (
@@ -1131,7 +1299,7 @@ export default function AdminMembersPage() {
                 ) : (
                   <>
                     <Plus size={16} />
-                    Add Member
+                    Create Member
                   </>
                 )}
               </button>
@@ -1189,10 +1357,6 @@ function DetailRow({
   );
 }
 
-/* =========================
-   STYLES
-========================= */
-
 const pageStyle = {
   minHeight: "100vh",
   background: "#050505",
@@ -1229,13 +1393,15 @@ const backButton = {
     "1px solid rgba(255,255,255,0.08)",
   background:
     "rgba(255,255,255,0.04)",
-  color: "rgba(255,255,255,0.7)",
+  color:
+    "rgba(255,255,255,0.7)",
   cursor: "pointer",
 };
 
 const eyebrowStyle = {
   margin: 0,
-  color: "rgba(255,255,255,0.4)",
+  color:
+    "rgba(255,255,255,0.4)",
   fontSize: "11px",
   letterSpacing: "4px",
   fontWeight: 600,
@@ -1249,7 +1415,8 @@ const titleStyle = {
 
 const subtitleStyle = {
   marginTop: "8px",
-  color: "rgba(255,255,255,0.45)",
+  color:
+    "rgba(255,255,255,0.45)",
 };
 
 const statsGrid = {
@@ -1312,10 +1479,12 @@ const sectionActions = {
 
 const cardLabel = {
   margin: 0,
-  color: "rgba(255,255,255,0.4)",
+  color:
+    "rgba(255,255,255,0.4)",
   fontSize: "11px",
   letterSpacing: "1.2px",
-  textTransform: "uppercase" as const,
+  textTransform:
+    "uppercase" as const,
 };
 
 const sectionTitle = {
@@ -1325,7 +1494,8 @@ const sectionTitle = {
 
 const sectionSubtitle = {
   marginTop: "5px",
-  color: "rgba(255,255,255,0.35)",
+  color:
+    "rgba(255,255,255,0.35)",
   fontSize: "13px",
 };
 
@@ -1347,7 +1517,8 @@ const searchInput = {
   minWidth: 0,
   border: "none",
   outline: "none",
-  background: "transparent",
+  background:
+    "transparent",
   color: "white",
   fontSize: "14px",
 };
@@ -1357,24 +1528,29 @@ const clearSearch = {
   alignItems: "center",
   justifyContent: "center",
   border: "none",
-  background: "transparent",
-  color: "rgba(255,255,255,0.5)",
+  background:
+    "transparent",
+  color:
+    "rgba(255,255,255,0.5)",
   cursor: "pointer",
   padding: "2px",
 };
 
 const memberList = {
   display: "flex",
-  flexDirection: "column" as const,
+  flexDirection:
+    "column" as const,
   gap: "10px",
 };
 
 const memberRow = {
   display: "grid",
-  gridTemplateColumns: "1fr auto",
+  gridTemplateColumns:
+    "1fr auto",
   alignItems: "center",
   gap: "12px",
-  padding: "10px 12px 10px 18px",
+  padding:
+    "10px 12px 10px 18px",
   borderRadius: "16px",
   background:
     "rgba(0,0,0,0.22)",
@@ -1390,9 +1566,11 @@ const memberMainButton = {
   alignItems: "center",
   gap: "18px",
   border: "none",
-  background: "transparent",
+  background:
+    "transparent",
   color: "white",
-  textAlign: "left" as const,
+  textAlign:
+    "left" as const,
   cursor: "pointer",
   padding: "8px 0",
 };
@@ -1417,14 +1595,16 @@ const avatar = {
 
 const columnLabel = {
   margin: "0 0 5px",
-  color: "rgba(255,255,255,0.3)",
+  color:
+    "rgba(255,255,255,0.3)",
   fontSize: "9px",
   letterSpacing: "1px",
 };
 
 const mutedText = {
   marginTop: "5px",
-  color: "rgba(255,255,255,0.4)",
+  color:
+    "rgba(255,255,255,0.4)",
   fontSize: "12px",
 };
 
@@ -1454,14 +1634,17 @@ const iconButton = {
     "1px solid rgba(255,255,255,0.08)",
   background:
     "rgba(255,255,255,0.045)",
-  color: "rgba(255,255,255,0.65)",
+  color:
+    "rgba(255,255,255,0.65)",
   cursor: "pointer",
 };
 
 const emptyState = {
   padding: "55px 20px",
-  textAlign: "center" as const,
-  color: "rgba(255,255,255,0.4)",
+  textAlign:
+    "center" as const,
+  color:
+    "rgba(255,255,255,0.4)",
   background:
     "rgba(0,0,0,0.2)",
   borderRadius: "16px",
@@ -1478,7 +1661,8 @@ const primaryButton = {
   color: "black",
   cursor: "pointer",
   fontWeight: 600,
-  whiteSpace: "nowrap" as const,
+  whiteSpace:
+    "nowrap" as const,
 };
 
 const dangerButton = {
@@ -1543,14 +1727,16 @@ const modalOverlay = {
   padding: "20px",
   background:
     "rgba(0,0,0,0.78)",
-  backdropFilter: "blur(14px)",
+  backdropFilter:
+    "blur(14px)",
 };
 
 const modal = {
   width: "100%",
   maxWidth: "560px",
   maxHeight: "85vh",
-  overflowY: "auto" as const,
+  overflowY:
+    "auto" as const,
   padding: "28px",
   borderRadius: "24px",
   background: "#111",
@@ -1564,7 +1750,8 @@ const formModal = {
   width: "100%",
   maxWidth: "500px",
   maxHeight: "90vh",
-  overflowY: "auto" as const,
+  overflowY:
+    "auto" as const,
   padding: "30px",
   borderRadius: "25px",
   background: "#111",
@@ -1576,8 +1763,10 @@ const formModal = {
 
 const modalHeader = {
   display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
+  justifyContent:
+    "space-between",
+  alignItems:
+    "flex-start",
   marginBottom: "20px",
 };
 
@@ -1603,7 +1792,8 @@ const closeButton = {
 
 const detailRow = {
   display: "flex",
-  justifyContent: "space-between",
+  justifyContent:
+    "space-between",
   gap: "20px",
   padding: "14px 0",
   borderBottom:
@@ -1611,15 +1801,18 @@ const detailRow = {
 };
 
 const detailLabel = {
-  color: "rgba(255,255,255,0.4)",
+  color:
+    "rgba(255,255,255,0.4)",
   fontSize: "13px",
 };
 
 const detailValue = {
   maxWidth: "65%",
-  textAlign: "right" as const,
+  textAlign:
+    "right" as const,
   fontSize: "13px",
-  wordBreak: "break-word" as const,
+  wordBreak:
+    "break-word" as const,
 };
 
 const modalActions = {
@@ -1632,19 +1825,28 @@ const modalActions = {
 
 const formStyle = {
   display: "flex",
-  flexDirection: "column" as const,
+  flexDirection:
+    "column" as const,
   gap: "10px",
 };
 
 const labelStyle = {
-  color: "rgba(255,255,255,0.45)",
+  color:
+    "rgba(255,255,255,0.45)",
   fontSize: "12px",
   marginTop: "5px",
 };
 
+const labelWithIcon = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "5px",
+};
+
 const inputStyle = {
   width: "100%",
-  boxSizing: "border-box" as const,
+  boxSizing:
+    "border-box" as const,
   padding: "14px",
   borderRadius: "12px",
   border:
@@ -1658,8 +1860,10 @@ const inputStyle = {
 
 const footerStyle = {
   marginTop: "24px",
-  textAlign: "center" as const,
-  color: "rgba(255,255,255,0.3)",
+  textAlign:
+    "center" as const,
+  color:
+    "rgba(255,255,255,0.3)",
   fontSize: "12px",
 };
 
@@ -1668,5 +1872,6 @@ const loadingStyle = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  color: "rgba(255,255,255,0.5)",
+  color:
+    "rgba(255,255,255,0.5)",
 };
