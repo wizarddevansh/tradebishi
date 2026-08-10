@@ -2,8 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
+type MemberPayload = {
+  id?: unknown;
+  full_name?: unknown;
+  email?: unknown;
+  password?: unknown;
+  phone?: unknown;
+  investment_amount?: unknown;
+  profit_share?: unknown;
+  status?: unknown;
+};
+
 const MEMBER_SELECT =
-  "id, user_id, full_name, phone, email, investment_amount, profit_share, status, created_at";
+  "id, user_id, full_name, phone, investment_amount, profit_share, status, created_at";
 
 const ALLOWED_STATUSES = [
   "active",
@@ -11,28 +22,28 @@ const ALLOWED_STATUSES = [
   "suspended",
 ] as const;
 
-type MemberInput = {
-  id?: string;
-  full_name?: string;
-  phone?: string | null;
-  email?: string;
-  password?: string;
-  investment_amount?: number | string;
-  profit_share?: number | string;
-  status?: string;
+type ValidatedMember = {
+  full_name: string;
+  email: string;
+  password: string;
+  phone: string | null;
+  investment_amount: number;
+  profit_share: number;
+  status: (typeof ALLOWED_STATUSES)[number];
 };
 
-function adminClient() {
+function getAdminSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!url || !key) {
+  if (!url || !serviceRoleKey) {
     throw new Error(
-      "Supabase environment variables are missing."
+      "Supabase server environment variables are missing."
     );
   }
 
-  return createClient(url, key, {
+  return createClient(url, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -40,7 +51,7 @@ function adminClient() {
   });
 }
 
-async function checkAdmin() {
+async function requireAdmin(): Promise<NextResponse | null> {
   const supabase = await createServerSupabaseClient();
 
   const {
@@ -50,24 +61,35 @@ async function checkAdmin() {
 
   if (userError || !user) {
     return NextResponse.json(
-      { error: "Unauthorized." },
-      { status: 401 }
+      {
+        error: "Unauthorized.",
+      },
+      {
+        status: 401,
+      }
     );
   }
 
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
+  const { data: profile, error: profileError } =
+    await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
 
-  if (error || !profile || profile.role !== "admin") {
+  if (
+    profileError ||
+    !profile ||
+    profile.role !== "admin"
+  ) {
     return NextResponse.json(
       {
         error:
           "Forbidden. Admin access required.",
       },
-      { status: 403 }
+      {
+        status: 403,
+      }
     );
   }
 
@@ -76,9 +98,9 @@ async function checkAdmin() {
 
 async function getBody(
   request: NextRequest
-): Promise<MemberInput | null> {
+): Promise<MemberPayload | null> {
   try {
-    const body = await request.json();
+    const body: unknown = await request.json();
 
     if (
       !body ||
@@ -88,50 +110,91 @@ async function getBody(
       return null;
     }
 
-    return body as MemberInput;
+    return body as MemberPayload;
   } catch {
     return null;
   }
 }
 
-function validate(input: MemberInput) {
+function validateMember(
+  body: MemberPayload,
+  passwordRequired: boolean
+):
+  | {
+      ok: true;
+      data: ValidatedMember;
+    }
+  | {
+      ok: false;
+      error: string;
+    } {
   const full_name =
-    typeof input.full_name === "string"
-      ? input.full_name.trim()
+    typeof body.full_name === "string"
+      ? body.full_name.trim()
       : "";
 
   const email =
-    typeof input.email === "string"
-      ? input.email.trim().toLowerCase()
+    typeof body.email === "string"
+      ? body.email.trim().toLowerCase()
+      : "";
+
+  const password =
+    typeof body.password === "string"
+      ? body.password
       : "";
 
   const phone =
-    typeof input.phone === "string"
-      ? input.phone.trim()
+    typeof body.phone === "string"
+      ? body.phone.trim()
       : null;
 
   const investment_amount = Number(
-    input.investment_amount ?? 0
+    body.investment_amount
   );
 
   const profit_share = Number(
-    input.profit_share ?? 0
+    body.profit_share
   );
 
-  const status =
-    typeof input.status === "string"
-      ? input.status.toLowerCase()
+  const rawStatus =
+    typeof body.status === "string"
+      ? body.status.trim().toLowerCase()
       : "active";
 
   if (!full_name) {
     return {
+      ok: false,
       error: "Full name is required.",
     };
   }
 
-  if (!email || !email.includes("@")) {
+  if (!email) {
     return {
-      error: "A valid email is required.",
+      ok: false,
+      error: "Email is required.",
+    };
+  }
+
+  if (!/^\S+@\S+\.\S+$/.test(email)) {
+    return {
+      ok: false,
+      error:
+        "Please enter a valid email address.",
+    };
+  }
+
+  if (passwordRequired && !password) {
+    return {
+      ok: false,
+      error: "Password is required.",
+    };
+  }
+
+  if (password && password.length < 6) {
+    return {
+      ok: false,
+      error:
+        "Password must be at least 6 characters.",
     };
   }
 
@@ -140,6 +203,7 @@ function validate(input: MemberInput) {
     investment_amount < 0
   ) {
     return {
+      ok: false,
       error:
         "Investment amount must be 0 or greater.",
     };
@@ -151,6 +215,7 @@ function validate(input: MemberInput) {
     profit_share > 100
   ) {
     return {
+      ok: false,
       error:
         "Profit share must be between 0 and 100.",
     };
@@ -158,39 +223,48 @@ function validate(input: MemberInput) {
 
   if (
     !ALLOWED_STATUSES.includes(
-      status as (typeof ALLOWED_STATUSES)[number]
+      rawStatus as (typeof ALLOWED_STATUSES)[number]
     )
   ) {
     return {
+      ok: false,
       error: "Invalid member status.",
     };
   }
 
   return {
-    full_name,
-    email,
-    phone: phone || null,
-    investment_amount,
-    profit_share,
-    status,
+    ok: true,
+    data: {
+      full_name,
+      email,
+      password,
+      phone: phone || null,
+      investment_amount,
+      profit_share,
+      status:
+        rawStatus as (typeof ALLOWED_STATUSES)[number],
+    },
   };
 }
 
-/* =====================================================
-   GET
-===================================================== */
+/* =========================
+   GET MEMBERS
+========================= */
 
 export async function GET() {
   try {
-    const denied = await checkAdmin();
+    const authError = await requireAdmin();
 
-    if (denied) {
-      return denied;
+    if (authError) {
+      return authError;
     }
 
-    const supabase = adminClient();
+    const supabase = getAdminSupabase();
 
-    const { data, error } = await supabase
+    const {
+      data: members,
+      error,
+    } = await supabase
       .from("members")
       .select(MEMBER_SELECT)
       .order("created_at", {
@@ -198,47 +272,93 @@ export async function GET() {
       });
 
     if (error) {
-      console.error("Members GET error:", error);
+      console.error(
+        "Members GET error:",
+        error
+      );
 
       return NextResponse.json(
         {
           error: "Failed to load members.",
-          details:
-            process.env.NODE_ENV === "development"
-              ? error.message
-              : undefined,
+          details: error.message,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
+    /*
+     * Email is stored in Supabase Auth,
+     * not in members.email.
+     */
+    const membersWithEmail =
+      await Promise.all(
+        (members ?? []).map(
+          async (member) => {
+            if (!member.user_id) {
+              return {
+                ...member,
+                email: null,
+              };
+            }
+
+            const {
+              data,
+              error: authLookupError,
+            } =
+              await supabase.auth.admin.getUserById(
+                member.user_id
+              );
+
+            if (authLookupError) {
+              console.error(
+                "Auth lookup error:",
+                authLookupError
+              );
+            }
+
+            return {
+              ...member,
+              email:
+                data.user?.email ?? null,
+            };
+          }
+        )
+      );
+
     return NextResponse.json({
-      members: data ?? [],
+      members: membersWithEmail,
     });
   } catch (error) {
-    console.error("Members GET:", error);
+    console.error(
+      "Members GET unexpected error:",
+      error
+    );
 
     return NextResponse.json(
       {
         error: "Internal server error.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
 
-/* =====================================================
-   POST
-===================================================== */
+/* =========================
+   POST - CREATE MEMBER
+========================= */
 
 export async function POST(
   request: NextRequest
 ) {
   try {
-    const denied = await checkAdmin();
+    const authError = await requireAdmin();
 
-    if (denied) {
-      return denied;
+    if (authError) {
+      return authError;
     }
 
     const body = await getBody(request);
@@ -246,140 +366,164 @@ export async function POST(
     if (!body) {
       return NextResponse.json(
         {
-          error: "Invalid JSON request body.",
+          error:
+            "Request body must be valid JSON.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const validation = validate(body);
+    const validation = validateMember(
+      body,
+      true
+    );
 
-    if ("error" in validation) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 }
-      );
-    }
-
-    const password =
-      typeof body.password === "string"
-        ? body.password
-        : "";
-
-    if (password.length < 6) {
+    if (!validation.ok) {
       return NextResponse.json(
         {
-          error:
-            "Password must be at least 6 characters.",
+          error: validation.error,
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const supabase = adminClient();
+    const memberData = validation.data;
+
+    const supabase = getAdminSupabase();
 
     /*
      * Create Supabase Auth account.
+     *
+     * Email and password are stored by
+     * Supabase Auth, NOT members table.
      */
-    const { data: authData, error: authError } =
+    const {
+      data: authData,
+      error: authCreateError,
+    } =
       await supabase.auth.admin.createUser({
-        email: validation.email,
-        password,
+        email: memberData.email,
+        password: memberData.password,
         email_confirm: true,
       });
 
-    if (authError || !authData.user) {
+    if (
+      authCreateError ||
+      !authData.user
+    ) {
       console.error(
-        "Auth user creation error:",
-        authError
+        "Member Auth creation error:",
+        authCreateError
       );
 
       return NextResponse.json(
         {
           error:
-            authError?.message ||
-            "Failed to create member account.",
+            authCreateError?.message ||
+            "Failed to create member login account.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
     const userId = authData.user.id;
 
     /*
-     * Create member record.
-     *
-     * Password is NOT stored in members.
+     * Insert ONLY columns that actually
+     * exist in members table.
      */
-    const { data: member, error: memberError } =
-      await supabase
-        .from("members")
-        .insert({
-          user_id: userId,
-          full_name: validation.full_name,
-          phone: validation.phone,
-          email: validation.email,
-          investment_amount:
-            validation.investment_amount,
-          profit_share:
-            validation.profit_share,
-          status: validation.status,
-        })
-        .select(MEMBER_SELECT)
-        .single();
+    const {
+      data: member,
+      error: insertError,
+    } = await supabase
+      .from("members")
+      .insert({
+        user_id: userId,
+        full_name: memberData.full_name,
+        phone: memberData.phone,
+        investment_amount:
+          memberData.investment_amount,
+        profit_share:
+          memberData.profit_share,
+        status: memberData.status,
+      })
+      .select(MEMBER_SELECT)
+      .single();
 
-    if (memberError) {
+    /*
+     * If members insert fails,
+     * remove the Auth account as rollback.
+     */
+    if (insertError || !member) {
       console.error(
         "Member insert error:",
-        memberError
+        insertError
       );
 
-      /*
-       * Roll back Auth account.
-       */
-      await supabase.auth.admin.deleteUser(userId);
+      await supabase.auth.admin.deleteUser(
+        userId
+      );
 
       return NextResponse.json(
         {
           error:
-            "Failed to create member record.",
+            "Failed to create member.",
           details:
-            process.env.NODE_ENV === "development"
-              ? memberError.message
-              : undefined,
+            insertError?.message ||
+            "Member record was not created.",
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
     }
 
     return NextResponse.json(
-      { member },
-      { status: 201 }
+      {
+        member: {
+          ...member,
+          email: memberData.email,
+        },
+      },
+      {
+        status: 201,
+      }
     );
   } catch (error) {
-    console.error("Members POST:", error);
+    console.error(
+      "Members POST unexpected error:",
+      error
+    );
 
     return NextResponse.json(
       {
         error: "Internal server error.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
 
-/* =====================================================
-   PATCH
-===================================================== */
+/* =========================
+   PATCH - UPDATE MEMBER
+========================= */
 
 export async function PATCH(
   request: NextRequest
 ) {
   try {
-    const denied = await checkAdmin();
+    const authError = await requireAdmin();
 
-    if (denied) {
-      return denied;
+    if (authError) {
+      return authError;
     }
 
     const body = await getBody(request);
@@ -387,220 +531,172 @@ export async function PATCH(
     if (!body) {
       return NextResponse.json(
         {
-          error: "Invalid JSON request body.",
+          error:
+            "Request body must be valid JSON.",
         },
-        { status: 400 }
-      );
-    }
-
-    if (!body.id) {
-      return NextResponse.json(
         {
-          error: "Member ID is required.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const validation = validate(body);
-
-    if ("error" in validation) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 }
-      );
-    }
-
-    const supabase = adminClient();
-
-    /*
-     * Find existing member.
-     */
-    const {
-      data: existing,
-      error: existingError,
-    } = await supabase
-      .from("members")
-      .select("id, user_id")
-      .eq("id", body.id)
-      .maybeSingle();
-
-    if (existingError) {
-      console.error(existingError);
-
-      return NextResponse.json(
-        {
-          error: "Failed to find member.",
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!existing) {
-      return NextResponse.json(
-        {
-          error: "Member not found.",
-        },
-        { status: 404 }
-      );
-    }
-
-    /*
-     * Update Auth email/password.
-     */
-    if (existing.user_id) {
-      const authUpdate: {
-        email?: string;
-        password?: string;
-      } = {
-        email: validation.email,
-      };
-
-      if (
-        typeof body.password === "string" &&
-        body.password.length > 0
-      ) {
-        if (body.password.length < 6) {
-          return NextResponse.json(
-            {
-              error:
-                "Password must be at least 6 characters.",
-            },
-            { status: 400 }
-          );
+          status: 400,
         }
-
-        authUpdate.password = body.password;
-      }
-
-      const { error: authError } =
-        await supabase.auth.admin.updateUserById(
-          existing.user_id,
-          authUpdate
-        );
-
-      if (authError) {
-        console.error(authError);
-
-        return NextResponse.json(
-          {
-            error:
-              authError.message ||
-              "Failed to update account.",
-          },
-          { status: 400 }
-        );
-      }
-    }
-
-    /*
-     * Update member database record.
-     */
-    const { data: member, error } =
-      await supabase
-        .from("members")
-        .update({
-          full_name: validation.full_name,
-          phone: validation.phone,
-          email: validation.email,
-          investment_amount:
-            validation.investment_amount,
-          profit_share:
-            validation.profit_share,
-          status: validation.status,
-        })
-        .eq("id", body.id)
-        .select(MEMBER_SELECT)
-        .maybeSingle();
-
-    if (error) {
-      console.error(
-        "Member update error:",
-        error
       );
-
-      return NextResponse.json(
-        {
-          error: "Failed to update member.",
-          details:
-            process.env.NODE_ENV === "development"
-              ? error.message
-              : undefined,
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!member) {
-      return NextResponse.json(
-        {
-          error: "Member not found.",
-        },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({
-      member,
-    });
-  } catch (error) {
-    console.error("Members PATCH:", error);
-
-    return NextResponse.json(
-      {
-        error: "Internal server error.",
-      },
-      { status: 500 }
-    );
-  }
-}
-
-/* =====================================================
-   DELETE
-===================================================== */
-
-export async function DELETE(
-  request: NextRequest
-) {
-  try {
-    const denied = await checkAdmin();
-
-    if (denied) {
-      return denied;
     }
 
     const id =
-      request.nextUrl.searchParams.get("id");
+      typeof body.id === "string"
+        ? body.id.trim()
+        : "";
 
     if (!id) {
       return NextResponse.json(
         {
           error: "Member ID is required.",
         },
-        { status: 400 }
+        {
+          status: 400,
+        }
       );
     }
 
-    const supabase = adminClient();
+    const validation = validateMember(
+      body,
+      false
+    );
+
+    if (!validation.ok) {
+      return NextResponse.json(
+        {
+          error: validation.error,
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const memberData = validation.data;
+
+    const supabase = getAdminSupabase();
 
     /*
-     * Get linked Auth user.
+     * Find existing member.
      */
     const {
-      data: member,
-      error: findError,
+      data: existingMember,
+      error: lookupError,
     } = await supabase
       .from("members")
-      .select("id, user_id")
+      .select("user_id")
       .eq("id", id)
       .maybeSingle();
 
-    if (findError) {
+    if (lookupError) {
+      console.error(
+        "Member lookup error:",
+        lookupError
+      );
+
       return NextResponse.json(
         {
-          error: "Failed to find member.",
+          error:
+            "Failed to find member.",
+          details:
+            lookupError.message,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
+      );
+    }
+
+    if (!existingMember) {
+      return NextResponse.json(
+        {
+          error: "Member not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    /*
+     * Update Supabase Auth email/password.
+     */
+    if (existingMember.user_id) {
+      const authUpdate: {
+        email?: string;
+        password?: string;
+      } = {
+        email: memberData.email,
+      };
+
+      if (memberData.password) {
+        authUpdate.password =
+          memberData.password;
+      }
+
+      const {
+        error: authUpdateError,
+      } =
+        await supabase.auth.admin.updateUserById(
+          existingMember.user_id,
+          authUpdate
+        );
+
+      if (authUpdateError) {
+        console.error(
+          "Auth update error:",
+          authUpdateError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              authUpdateError.message,
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+    }
+
+    /*
+     * Update ONLY actual members columns.
+     */
+    const {
+      data: member,
+      error: updateError,
+    } = await supabase
+      .from("members")
+      .update({
+        full_name: memberData.full_name,
+        phone: memberData.phone,
+        investment_amount:
+          memberData.investment_amount,
+        profit_share:
+          memberData.profit_share,
+        status: memberData.status,
+      })
+      .eq("id", id)
+      .select(MEMBER_SELECT)
+      .maybeSingle();
+
+    if (updateError) {
+      console.error(
+        "Member update error:",
+        updateError
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Failed to update member.",
+          details:
+            updateError.message,
+        },
+        {
+          status: 500,
+        }
       );
     }
 
@@ -609,64 +705,174 @@ export async function DELETE(
         {
           error: "Member not found.",
         },
-        { status: 404 }
+        {
+          status: 404,
+        }
       );
     }
 
-    /*
-     * Delete Auth account.
-     */
-    if (member.user_id) {
-      const { error: authError } =
-        await supabase.auth.admin.deleteUser(
-          member.user_id
-        );
+    return NextResponse.json({
+      member: {
+        ...member,
+        email: memberData.email,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Members PATCH unexpected error:",
+      error
+    );
 
-      if (authError) {
-        console.error(authError);
-
-        return NextResponse.json(
-          {
-            error:
-              "Failed to delete member account.",
-          },
-          { status: 500 }
-        );
+    return NextResponse.json(
+      {
+        error: "Internal server error.",
+      },
+      {
+        status: 500,
       }
+    );
+  }
+}
+
+/* =========================
+   DELETE MEMBER
+========================= */
+
+export async function DELETE(
+  request: NextRequest
+) {
+  try {
+    const authError = await requireAdmin();
+
+    if (authError) {
+      return authError;
     }
 
-    /*
-     * Delete member record.
-     */
-    const { error: deleteError } =
-      await supabase
-        .from("members")
-        .delete()
-        .eq("id", id);
+    const id =
+      request.nextUrl.searchParams
+        .get("id")
+        ?.trim();
 
-    if (deleteError) {
-      console.error(deleteError);
+    if (!id) {
+      return NextResponse.json(
+        {
+          error: "Member ID is required.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const supabase = getAdminSupabase();
+
+    /*
+     * Get linked Auth user before
+     * deleting the member record.
+     */
+    const {
+      data: member,
+      error: lookupError,
+    } = await supabase
+      .from("members")
+      .select("user_id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (lookupError) {
+      console.error(
+        "Member lookup error:",
+        lookupError
+      );
 
       return NextResponse.json(
         {
           error:
-            "Failed to delete member record.",
+            "Failed to find member.",
+          details:
+            lookupError.message,
         },
-        { status: 500 }
+        {
+          status: 500,
+        }
       );
+    }
+
+    if (!member) {
+      return NextResponse.json(
+        {
+          error: "Member not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    /*
+     * Delete member database record.
+     */
+    const {
+      error: deleteError,
+    } = await supabase
+      .from("members")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) {
+      console.error(
+        "Member delete error:",
+        deleteError
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Failed to delete member.",
+          details:
+            deleteError.message,
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    /*
+     * Delete linked Supabase Auth account.
+     */
+    if (member.user_id) {
+      const {
+        error: authDeleteError,
+      } =
+        await supabase.auth.admin.deleteUser(
+          member.user_id
+        );
+
+      if (authDeleteError) {
+        console.error(
+          "Auth user delete error:",
+          authDeleteError
+        );
+      }
     }
 
     return NextResponse.json({
       success: true,
     });
   } catch (error) {
-    console.error("Members DELETE:", error);
+    console.error(
+      "Members DELETE unexpected error:",
+      error
+    );
 
     return NextResponse.json(
       {
         error: "Internal server error.",
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
