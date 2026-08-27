@@ -1,21 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Wallet,
   TrendingUp,
+  TrendingDown,
   RefreshCw,
   LogOut,
-  Users,
-  Wallet,
-  Pencil,
   X,
-  Save,
   Plus,
   Trash2,
-  ArrowUpRight,
-  ArrowDownRight,
-  AlertTriangle,
+  Pencil,
+  BarChart3,
+  ArrowLeft,
+  Search,
+  CircleDollarSign,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
@@ -33,19 +33,10 @@ type Member = {
   full_name: string;
 };
 
-type InvestmentWithMember = Investment & {
-  member_name: string;
-};
-
-type FormMode = "add" | "edit";
-
 export default function AdminInvestmentsPage() {
   const router = useRouter();
 
-  const [investments, setInvestments] = useState<
-    InvestmentWithMember[]
-  >([]);
-
+  const [investments, setInvestments] = useState<Investment[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
 
   const [loading, setLoading] = useState(true);
@@ -54,39 +45,28 @@ export default function AdminInvestmentsPage() {
   const [deleting, setDeleting] = useState(false);
 
   const [error, setError] = useState("");
-  const [adminName, setAdminName] =
-    useState("Admin");
 
-  const [formOpen, setFormOpen] =
-    useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
 
-  const [formMode, setFormMode] =
-    useState<FormMode>("add");
+  const [selectedInvestment, setSelectedInvestment] =
+    useState<Investment | null>(null);
 
-  const [editingInvestment, setEditingInvestment] =
-    useState<InvestmentWithMember | null>(
-      null
-    );
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const [deleteTarget, setDeleteTarget] =
-    useState<InvestmentWithMember | null>(
-      null
-    );
+  const [newMemberId, setNewMemberId] = useState("");
+  const [newInvestedAmount, setNewInvestedAmount] = useState("");
+  const [newCurrentValue, setNewCurrentValue] = useState("");
 
-  const [form, setForm] = useState({
-    member_id: "",
-    invested_amount: "",
-    current_value: "",
-  });
+  const [editInvestedAmount, setEditInvestedAmount] = useState("");
+  const [editCurrentValue, setEditCurrentValue] = useState("");
 
   useEffect(() => {
-    loadPage();
+    loadInvestments();
   }, []);
 
-  async function loadPage() {
+  async function getAdmin() {
     const supabase = createClient();
-
-    setError("");
 
     const {
       data: { user },
@@ -94,13 +74,10 @@ export default function AdminInvestmentsPage() {
 
     if (!user) {
       router.replace("/login");
-      return;
+      return null;
     }
 
-    const {
-      data: profile,
-      error: profileError,
-    } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("full_name, role")
       .eq("id", user.id)
@@ -112,490 +89,374 @@ export default function AdminInvestmentsPage() {
       profile.role !== "admin"
     ) {
       router.replace("/");
+      return null;
+    }
+
+    return {
+      user,
+      profile,
+    };
+  }
+
+  async function loadInvestments() {
+    setError("");
+
+    const supabase = createClient();
+
+    const admin = await getAdmin();
+
+    if (!admin) {
+      setLoading(false);
       return;
     }
 
-    setAdminName(
-      profile.full_name || "Admin"
+    const [investmentsResult, membersResult] =
+      await Promise.all([
+        supabase
+          .from("investments")
+          .select(
+            "id, member_id, invested_amount, current_value, profit_loss, updated_at"
+          )
+          .order("updated_at", {
+            ascending: false,
+          }),
+
+        supabase
+          .from("members")
+          .select("id, full_name")
+          .order("full_name", {
+            ascending: true,
+          }),
+      ]);
+
+    if (investmentsResult.error) {
+      setError(investmentsResult.error.message);
+      setLoading(false);
+      return;
+    }
+
+    if (membersResult.error) {
+      setError(membersResult.error.message);
+      setLoading(false);
+      return;
+    }
+
+    setInvestments(
+      (investmentsResult.data ?? []) as Investment[]
     );
 
-    await Promise.all([
-      loadInvestments(),
-      loadMembers(),
-    ]);
+    setMembers(
+      (membersResult.data ?? []) as Member[]
+    );
 
     setLoading(false);
   }
 
-  async function loadMembers() {
-    const supabase = createClient();
-
-    const {
-      data,
-      error: memberError,
-    } = await supabase
-      .from("members")
-      .select("id, full_name")
-      .order("full_name", {
-        ascending: true,
-      });
-
-    if (memberError) {
-      setError(memberError.message);
-      return;
-    }
-
-    setMembers(
-      (data ?? []) as Member[]
-    );
-  }
-
-  async function loadInvestments() {
-    const supabase = createClient();
-
-    const {
-      data,
-      error: investmentError,
-    } = await supabase
-      .from("investments")
-      .select(
-        "id, member_id, invested_amount, current_value, profit_loss, updated_at"
-      )
-      .order("updated_at", {
-        ascending: false,
-      });
-
-    if (investmentError) {
-      setError(
-        investmentError.message
-      );
-      return;
-    }
-
-    const {
-      data: memberData,
-      error: memberError,
-    } = await supabase
-      .from("members")
-      .select("id, full_name");
-
-    if (memberError) {
-      setError(memberError.message);
-      return;
-    }
-
-    const memberList =
-      (memberData ?? []) as Member[];
-
-    const memberMap = new Map(
-      memberList.map((member) => [
-        member.id,
-        member.full_name,
-      ])
-    );
-
-    const formatted =
-      (data ?? []).map(
-        (investment) => {
-          const invested =
-            Number(
-              investment.invested_amount ||
-                0
-            );
-
-          const current =
-            Number(
-              investment.current_value ||
-                0
-            );
-
-          return {
-            ...investment,
-            profit_loss:
-              current - invested,
-            member_name:
-              memberMap.get(
-                investment.member_id
-              ) ||
-              "Unknown Member",
-          };
-        }
-      ) as InvestmentWithMember[];
-
-    setInvestments(formatted);
-  }
-
   async function refreshInvestments() {
+    if (refreshing) return;
+
     setRefreshing(true);
-    setError("");
-
-    await Promise.all([
-      loadInvestments(),
-      loadMembers(),
-    ]);
-
+    await loadInvestments();
     setRefreshing(false);
   }
 
-  /* =========================
-     ADD
-  ========================= */
-
-  function openAdd() {
-    setFormMode("add");
-    setEditingInvestment(null);
-
-    setForm({
-      member_id: "",
-      invested_amount: "",
-      current_value: "",
-    });
-
-    setError("");
-    setFormOpen(true);
+  function currency(value: number) {
+    return `₹${Number(value || 0).toLocaleString("en-IN", {
+      maximumFractionDigits: 2,
+    })}`;
   }
 
-  /* =========================
-     EDIT
-  ========================= */
-
-  function openEdit(
-    investment: InvestmentWithMember
-  ) {
-    setFormMode("edit");
-    setEditingInvestment(
-      investment
+  function memberName(memberId: string) {
+    const member = members.find(
+      (item) => item.id === memberId
     );
 
-    setForm({
-      member_id:
-        investment.member_id,
-
-      invested_amount:
-        Number(
-          investment.invested_amount
-        ).toString(),
-
-      current_value:
-        Number(
-          investment.current_value
-        ).toString(),
-    });
-
-    setError("");
-    setFormOpen(true);
+    return member?.full_name || "Unknown Member";
   }
 
-  function closeForm() {
-    if (saving) return;
+  const filteredInvestments = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
 
-    setFormOpen(false);
-    setEditingInvestment(null);
+    if (!query) return investments;
 
-    setForm({
-      member_id: "",
-      invested_amount: "",
-      current_value: "",
-    });
+    return investments.filter((investment) =>
+      memberName(investment.member_id)
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [investments, searchQuery, members]);
 
-    setError("");
+  const totalInvested = investments.reduce(
+    (sum, investment) =>
+      sum + Number(investment.invested_amount || 0),
+    0
+  );
+
+  const totalCurrentValue = investments.reduce(
+    (sum, investment) =>
+      sum + Number(investment.current_value || 0),
+    0
+  );
+
+  const totalProfitLoss = investments.reduce(
+    (sum, investment) =>
+      sum + Number(investment.profit_loss || 0),
+    0
+  );
+
+  const totalReturn =
+    totalInvested > 0
+      ? (totalProfitLoss / totalInvested) * 100
+      : 0;
+
+  const profitableInvestments = investments.filter(
+    (investment) =>
+      Number(investment.profit_loss || 0) > 0
+  ).length;
+
+  const losingInvestments = investments.filter(
+    (investment) =>
+      Number(investment.profit_loss || 0) < 0
+  ).length;
+
+  function resetAddForm() {
+    setNewMemberId("");
+    setNewInvestedAmount("");
+    setNewCurrentValue("");
   }
 
-  /* =========================
-     SAVE
-  ========================= */
-
-  async function saveInvestment() {
+  function openAddModal() {
     setError("");
+    resetAddForm();
+    setShowAddModal(true);
+  }
 
+  function closeAddModal() {
     if (saving) return;
 
-    if (
-      formMode === "add" &&
-      !form.member_id
-    ) {
-      setError(
-        "Please select a member."
-      );
+    setShowAddModal(false);
+    resetAddForm();
+  }
+
+  function openEditModal(investment: Investment) {
+    setError("");
+
+    setSelectedInvestment(investment);
+
+    setEditInvestedAmount(
+      String(investment.invested_amount)
+    );
+
+    setEditCurrentValue(
+      String(investment.current_value)
+    );
+
+    setShowEditModal(true);
+  }
+
+  function closeEditModal() {
+    if (saving) return;
+
+    setShowEditModal(false);
+    setSelectedInvestment(null);
+
+    setEditInvestedAmount("");
+    setEditCurrentValue("");
+  }
+
+  async function addInvestment() {
+    if (saving) return;
+
+    setError("");
+
+    if (!newMemberId) {
+      setError("Please select a member.");
       return;
     }
 
-    const investedAmount =
-      Number(
-        form.invested_amount
-      );
-
-    const currentValue =
-      Number(
-        form.current_value
-      );
+    const investedAmount = Number(newInvestedAmount);
+    const currentValue = Number(newCurrentValue);
 
     if (
-      !Number.isFinite(
-        investedAmount
-      ) ||
-      investedAmount < 0
+      !Number.isFinite(investedAmount) ||
+      investedAmount <= 0
     ) {
-      setError(
-        "Invested amount must be a valid number."
-      );
+      setError("Please enter a valid invested amount.");
       return;
     }
 
     if (
-      !Number.isFinite(
-        currentValue
-      ) ||
+      !Number.isFinite(currentValue) ||
       currentValue < 0
     ) {
-      setError(
-        "Current value must be a valid number."
-      );
+      setError("Please enter a valid current value.");
       return;
     }
 
-    if (
-      formMode === "edit" &&
-      !editingInvestment
-    ) {
-      setError(
-        "Investment not selected."
-      );
-      return;
-    }
-
-    const profitLoss =
-      currentValue -
-      investedAmount;
+    const profitLoss = currentValue - investedAmount;
 
     setSaving(true);
 
-    const supabase =
-      createClient();
+    const supabase = createClient();
 
-    if (formMode === "add") {
-      const {
-        error: insertError,
-      } = await supabase
-        .from("investments")
-        .insert({
-          member_id:
-            form.member_id,
+    const admin = await getAdmin();
 
-          invested_amount:
-            investedAmount,
-
-          current_value:
-            currentValue,
-
-          profit_loss:
-            profitLoss,
-
-          updated_at:
-            new Date().toISOString(),
-        });
-
-      if (insertError) {
-        setError(
-          insertError.message
-        );
-        setSaving(false);
-        return;
-      }
-    } else {
-      const {
-        error: updateError,
-      } = await supabase
-        .from("investments")
-        .update({
-          member_id:
-            form.member_id,
-
-          invested_amount:
-            investedAmount,
-
-          current_value:
-            currentValue,
-
-          profit_loss:
-            profitLoss,
-
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq(
-          "id",
-          editingInvestment!.id
-        );
-
-      if (updateError) {
-        setError(
-          updateError.message
-        );
-        setSaving(false);
-        return;
-      }
+    if (!admin) {
+      setSaving(false);
+      return;
     }
 
-    setFormOpen(false);
-    setEditingInvestment(null);
+    const { error: insertError } = await supabase
+      .from("investments")
+      .insert({
+        member_id: newMemberId,
+        invested_amount: investedAmount,
+        current_value: currentValue,
+        profit_loss: profitLoss,
+        updated_at: new Date().toISOString(),
+      });
 
-    setForm({
-      member_id: "",
-      invested_amount: "",
-      current_value: "",
-    });
+    if (insertError) {
+      setError(insertError.message);
+      setSaving(false);
+      return;
+    }
+
+    setShowAddModal(false);
+    resetAddForm();
 
     await loadInvestments();
 
     setSaving(false);
   }
 
-  /* =========================
-     DELETE
-  ========================= */
+  async function updateInvestment() {
+    if (saving || !selectedInvestment) return;
 
-  function openDelete(
-    investment: InvestmentWithMember
-  ) {
-    setDeleteTarget(investment);
     setError("");
+
+    const investedAmount = Number(editInvestedAmount);
+    const currentValue = Number(editCurrentValue);
+
+    if (
+      !Number.isFinite(investedAmount) ||
+      investedAmount <= 0
+    ) {
+      setError("Please enter a valid invested amount.");
+      return;
+    }
+
+    if (
+      !Number.isFinite(currentValue) ||
+      currentValue < 0
+    ) {
+      setError("Please enter a valid current value.");
+      return;
+    }
+
+    const profitLoss = currentValue - investedAmount;
+
+    setSaving(true);
+
+    const supabase = createClient();
+
+    const admin = await getAdmin();
+
+    if (!admin) {
+      setSaving(false);
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("investments")
+      .update({
+        invested_amount: investedAmount,
+        current_value: currentValue,
+        profit_loss: profitLoss,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", selectedInvestment.id);
+
+    if (updateError) {
+      setError(updateError.message);
+      setSaving(false);
+      return;
+    }
+
+    setShowEditModal(false);
+    setSelectedInvestment(null);
+
+    await loadInvestments();
+
+    setSaving(false);
   }
 
-  function closeDelete() {
+  async function deleteInvestment(
+    investment: Investment
+  ) {
     if (deleting) return;
 
-    setDeleteTarget(null);
-  }
+    const confirmed = window.confirm(
+      `Delete this investment of ${currency(
+        Number(investment.invested_amount)
+      )} for ${memberName(
+        investment.member_id
+      )}?\n\nThis action cannot be undone.`
+    );
 
-  async function deleteInvestment() {
-    if (!deleteTarget) return;
-
-    if (deleting) return;
+    if (!confirmed) return;
 
     setDeleting(true);
     setError("");
 
-    const supabase =
-      createClient();
+    const supabase = createClient();
 
-    const {
-      error: deleteError,
-    } = await supabase
-      .from("investments")
-      .delete()
-      .eq(
-        "id",
-        deleteTarget.id
-      );
+    const admin = await getAdmin();
 
-    if (deleteError) {
-      setError(
-        deleteError.message
-      );
+    if (!admin) {
       setDeleting(false);
       return;
     }
 
-    setDeleteTarget(null);
+    const { error: deleteError } = await supabase
+      .from("investments")
+      .delete()
+      .eq("id", investment.id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      setDeleting(false);
+      return;
+    }
 
     await loadInvestments();
 
     setDeleting(false);
   }
 
-  /* =========================
-     LOGOUT
-  ========================= */
-
-  async function logout() {
-    const supabase =
-      createClient();
+  async function signOut() {
+    const supabase = createClient();
 
     await supabase.auth.signOut();
 
     router.replace("/login");
   }
 
-  /* =========================
-     HELPERS
-  ========================= */
-
-  function currency(
-    value: number
-  ) {
-    return `₹${Number(
-      value || 0
-    ).toLocaleString(
-      "en-IN",
-      {
-        maximumFractionDigits: 2,
-      }
-    )}`;
-  }
-
-  const totalInvested =
-    investments.reduce(
-      (sum, investment) =>
-        sum +
-        Number(
-          investment.invested_amount ||
-            0
-        ),
-      0
-    );
-
-  const totalCurrentValue =
-    investments.reduce(
-      (sum, investment) =>
-        sum +
-        Number(
-          investment.current_value ||
-            0
-        ),
-      0
-    );
-
-  const totalProfitLoss =
-    totalCurrentValue -
-    totalInvested;
-
-  const profitPercent =
-    totalInvested > 0
-      ? (totalProfitLoss /
-          totalInvested) *
-        100
-      : 0;
-
-  const isPositive =
-    totalProfitLoss >= 0;
-
-  const formInvested =
-    Number(
-      form.invested_amount || 0
-    );
-
-  const formCurrent =
-    Number(
-      form.current_value || 0
-    );
-
-  const formProfit =
-    formCurrent -
-    formInvested;
-
-  const formReturn =
-    formInvested > 0
-      ? (formProfit /
-          formInvested) *
-        100
-      : 0;
-
   if (loading) {
     return (
       <main style={pageStyle}>
-        <div style={loadingStyle}>
-          Loading Investments...
+        <div style={loadingContainer}>
+          <div style={loadingOrb}>
+            <Wallet size={22} />
+          </div>
+
+          <p style={loadingText}>
+            Loading investments
+          </p>
+
+          <span style={loadingSubtext}>
+            Please wait...
+          </span>
         </div>
       </main>
     );
@@ -604,73 +465,72 @@ export default function AdminInvestmentsPage() {
   return (
     <main style={pageStyle}>
       <div style={containerStyle}>
-
         {/* HEADER */}
 
         <header style={headerStyle}>
           <div>
-            <p style={eyebrowStyle}>
-              TRADEBISHI ADMIN
-            </p>
+            <button
+              type="button"
+              onClick={() => router.push("/admin")}
+              style={backButton}
+            >
+              <ArrowLeft size={15} />
+              Admin Dashboard
+            </button>
+
+            <div style={eyebrowStyle}>
+              TRADEBISHI
+              <span style={eyebrowDot}>•</span>
+              ADMIN
+            </div>
 
             <h1 style={titleStyle}>
               Investments
             </h1>
 
             <p style={subtitleStyle}>
-              Manage member portfolios
-              and investment performance,
-              {` `}
-              {adminName}.
+              Monitor and manage member investment
+              portfolios.
             </p>
           </div>
 
-          <div
-            style={headerButtons}
-          >
+          <div style={headerActions}>
             <button
               type="button"
-              onClick={openAdd}
-              style={addButton}
-            >
-              <Plus size={17} />
-              Add Investment
-            </button>
-
-            <button
-              type="button"
-              onClick={
-                refreshInvestments
-              }
+              onClick={refreshInvestments}
               disabled={refreshing}
-              style={
-                secondaryButton
-              }
+              style={secondaryButton}
             >
               <RefreshCw
-                size={16}
+                size={15}
                 style={{
-                  animation:
-                    refreshing
-                      ? "spin 0.8s linear infinite"
-                      : "none",
+                  animation: refreshing
+                    ? "spin 1s linear infinite"
+                    : "none",
                 }}
               />
 
               {refreshing
-                ? "Refreshing..."
+                ? "Refreshing"
                 : "Refresh"}
             </button>
 
             <button
               type="button"
-              onClick={logout}
-              style={
-                secondaryButton
-              }
+              onClick={openAddModal}
+              style={primaryButton}
+            >
+              <Plus size={16} />
+              Add Investment
+            </button>
+
+            <button
+              type="button"
+              onClick={signOut}
+              style={iconButton}
+              title="Sign out"
             >
               <LogOut size={16} />
-              Sign Out
             </button>
           </div>
         </header>
@@ -679,7 +539,25 @@ export default function AdminInvestmentsPage() {
 
         {error && (
           <div style={errorBox}>
-            {error}
+            <div style={errorIcon}>!</div>
+
+            <div>
+              <strong style={errorTitle}>
+                Something went wrong
+              </strong>
+
+              <p style={errorMessage}>
+                {error}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setError("")}
+              style={errorClose}
+            >
+              <X size={15} />
+            </button>
           </div>
         )}
 
@@ -687,963 +565,370 @@ export default function AdminInvestmentsPage() {
 
         <section style={summaryGrid}>
           <SummaryCard
-            title="Invested Capital"
-            value={currency(
-              totalInvested
-            )}
-            icon={
-              <Wallet size={19} />
-            }
+            title="Total Invested"
+            value={currency(totalInvested)}
+            icon={<Wallet size={18} />}
           />
 
           <SummaryCard
-            title="Current Portfolio"
-            value={currency(
-              totalCurrentValue
-            )}
-            icon={
-              <TrendingUp
-                size={19}
-              />
-            }
+            title="Current Value"
+            value={currency(totalCurrentValue)}
+            icon={<CircleDollarSign size={18} />}
           />
 
           <SummaryCard
-            title="Total P/L"
-            value={`${
-              isPositive
-                ? "+"
-                : "-"
-            }${currency(
-              Math.abs(
-                totalProfitLoss
-              )
-            )}`}
+            title="Total P / L"
+            value={currency(totalProfitLoss)}
             icon={
-              isPositive ? (
-                <ArrowUpRight
-                  size={19}
-                />
+              totalProfitLoss >= 0 ? (
+                <TrendingUp size={18} />
               ) : (
-                <ArrowDownRight
-                  size={19}
-                />
+                <TrendingDown size={18} />
               )
             }
-            positive={
-              isPositive
-            }
+            positive={totalProfitLoss >= 0}
+            secondary={`${totalReturn >= 0 ? "+" : ""}${totalReturn.toFixed(
+              2
+            )}% overall return`}
           />
 
           <SummaryCard
-            title="Portfolio Return"
-            value={`${
-              profitPercent >=
-              0
-                ? "+"
-                : ""
-            }${profitPercent.toFixed(
-              2
-            )}%`}
-            icon={
-              <Users size={19} />
-            }
-            positive={
-              profitPercent >=
-              0
+            title="Investment Records"
+            value={investments.length.toString()}
+            icon={<BarChart3 size={18} />}
+            secondary={
+              `${profitableInvestments} profitable · ${losingInvestments} losing`
             }
           />
         </section>
 
-        {/* INVESTMENTS */}
+        {/* MAIN PANEL */}
 
-        <section
-          style={tableSection}
-        >
-          <div
-            style={
-              sectionHeader
-            }
-          >
+        <section style={sectionStyle}>
+          <div style={sectionTop}>
             <div>
-              <p style={cardLabel}>
+              <div style={sectionEyebrow}>
                 PORTFOLIO
-              </p>
+              </div>
 
-              <h2
-                style={
-                  sectionTitle
-                }
-              >
-                Member Investments
+              <h2 style={sectionTitle}>
+                Investment Records
               </h2>
 
-              <p
-                style={
-                  sectionSubtitle
-                }
-              >
-                {investments.length}{" "}
-                investment
-                {investments.length ===
-                1
-                  ? ""
-                  : "s"}{" "}
-                recorded
+              <p style={sectionSubtitle}>
+                All investment positions currently
+                recorded in TradeBishi.
               </p>
             </div>
 
-            <div
-              style={
-                portfolioBadge
-              }
-            >
-              <TrendingUp
-                size={14}
-              />
-              Live Portfolio
+            <div style={sectionRight}>
+              <div style={recordBadge}>
+                <span style={recordDot} />
+                {investments.length}{" "}
+                {investments.length === 1
+                  ? "record"
+                  : "records"}
+              </div>
             </div>
           </div>
 
-          {investments.length ===
-          0 ? (
-            <div
-              style={
-                emptyState
-              }
-            >
-              <Wallet size={32} />
+          {/* SEARCH */}
 
-              <strong>
-                No investments found
-              </strong>
+          {investments.length > 0 && (
+            <div style={searchWrapper}>
+              <Search
+                size={16}
+                style={searchIcon}
+              />
 
-              <p>
-                Click "Add Investment"
-                to create the first
-                portfolio record.
-              </p>
-
-              <button
-                type="button"
-                onClick={
-                  openAdd
+              <input
+                value={searchQuery}
+                onChange={(event) =>
+                  setSearchQuery(
+                    event.target.value
+                  )
                 }
-                style={
-                  emptyAddButton
-                }
-              >
-                <Plus size={15} />
-                Add Investment
-              </button>
-            </div>
-          ) : (
-            <div
-              style={
-                tableWrapper
-              }
-            >
-              {/* TABLE HEADER */}
+                placeholder="Search by member name..."
+                style={searchInput}
+              />
 
-              <div
-                style={
-                  tableHeader
-                }
-              >
-                <span>
-                  MEMBER
-                </span>
-
-                <span>
-                  INVESTED
-                </span>
-
-                <span>
-                  CURRENT VALUE
-                </span>
-
-                <span>
-                  P/L
-                </span>
-
-                <span>
-                  RETURN
-                </span>
-
-                <span>
-                  UPDATED
-                </span>
-
-                <span></span>
-              </div>
-
-              {/* ROWS */}
-
-              {investments.map(
-                (investment) => {
-                  const invested =
-                    Number(
-                      investment.invested_amount ||
-                        0
-                    );
-
-                  const current =
-                    Number(
-                      investment.current_value ||
-                        0
-                    );
-
-                  const profit =
-                    current -
-                    invested;
-
-                  const returnPercent =
-                    invested >
-                    0
-                      ? (profit /
-                          invested) *
-                        100
-                      : 0;
-
-                  const positive =
-                    profit >= 0;
-
-                  return (
-                    <div
-                      key={
-                        investment.id
-                      }
-                      style={
-                        tableRow
-                      }
-                    >
-                      {/* MEMBER */}
-
-                      <div>
-                        <strong
-                          style={{
-                            display:
-                              "block",
-                            fontSize:
-                              "14px",
-                          }}
-                        >
-                          {
-                            investment.member_name
-                          }
-                        </strong>
-
-                        <span
-                          style={{
-                            display:
-                              "block",
-                            marginTop:
-                              "5px",
-                            color:
-                              "rgba(255,255,255,0.25)",
-                            fontSize:
-                              "9px",
-                          }}
-                        >
-                          {
-                            investment.member_id
-                          }
-                        </span>
-                      </div>
-
-                      {/* INVESTED */}
-
-                      <span>
-                        {currency(
-                          invested
-                        )}
-                      </span>
-
-                      {/* CURRENT */}
-
-                      <strong>
-                        {currency(
-                          current
-                        )}
-                      </strong>
-
-                      {/* P/L */}
-
-                      <span
-                        style={{
-                          color:
-                            positive
-                              ? "#34d399"
-                              : "#f87171",
-                          fontWeight:
-                            600,
-                        }}
-                      >
-                        {positive
-                          ? "+"
-                          : "-"}
-                        {currency(
-                          Math.abs(
-                            profit
-                          )
-                        )}
-                      </span>
-
-                      {/* RETURN */}
-
-                      <span
-                        style={{
-                          color:
-                            positive
-                              ? "#34d399"
-                              : "#f87171",
-                          fontWeight:
-                            600,
-                        }}
-                      >
-                        {returnPercent >=
-                        0
-                          ? "+"
-                          : ""}
-                        {returnPercent.toFixed(
-                          2
-                        )}
-                        %
-                      </span>
-
-                      {/* UPDATED */}
-
-                      <span
-                        style={{
-                          color:
-                            "rgba(255,255,255,0.38)",
-                          fontSize:
-                            "11px",
-                        }}
-                      >
-                        {new Date(
-                          investment.updated_at
-                        ).toLocaleString(
-                          "en-IN"
-                        )}
-                      </span>
-
-                      {/* ACTIONS */}
-
-                      <div
-                        style={
-                          rowActions
-                        }
-                      >
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openEdit(
-                              investment
-                            )
-                          }
-                          style={
-                            editButton
-                          }
-                          title="Edit investment"
-                        >
-                          <Pencil
-                            size={14}
-                          />
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openDelete(
-                              investment
-                            )
-                          }
-                          style={
-                            deleteButton
-                          }
-                          title="Delete investment"
-                        >
-                          <Trash2
-                            size={14}
-                          />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                }
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSearchQuery("")
+                  }
+                  style={searchClear}
+                >
+                  <X size={14} />
+                </button>
               )}
             </div>
           )}
-        </section>
 
-        <p
-          style={
-            footerStyle
-          }
-        >
-          TradeBishi • Investment
-          Control Center
-        </p>
+          {/* EMPTY */}
+
+          {investments.length === 0 ? (
+            <div style={emptyState}>
+              <div style={emptyIcon}>
+                <Wallet size={28} />
+              </div>
+
+              <h3 style={emptyTitle}>
+                No investments yet
+              </h3>
+
+              <p style={emptyText}>
+                Create the first investment record
+                for a member to get started.
+              </p>
+
+              <button
+                type="button"
+                onClick={openAddModal}
+                style={primaryButton}
+              >
+                <Plus size={16} />
+                Add First Investment
+              </button>
+            </div>
+          ) : filteredInvestments.length === 0 ? (
+            <div style={emptySearchState}>
+              <Search size={24} />
+
+              <p>
+                No investments match
+                "{searchQuery}".
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* DESKTOP TABLE */}
+
+              <div style={desktopTable}>
+                <div style={tableHeader}>
+                  <span>MEMBER</span>
+                  <span>INVESTED</span>
+                  <span>CURRENT VALUE</span>
+                  <span>PROFIT / LOSS</span>
+                  <span>UPDATED</span>
+                  <span>ACTIONS</span>
+                </div>
+
+                {filteredInvestments.map(
+                  (investment) => {
+                    const invested = Number(
+                      investment.invested_amount || 0
+                    );
+
+                    const currentValue = Number(
+                      investment.current_value || 0
+                    );
+
+                    const profitLoss = Number(
+                      investment.profit_loss || 0
+                    );
+
+                    const returnPercent =
+                      invested > 0
+                        ? (profitLoss / invested) *
+                          100
+                        : 0;
+
+                    return (
+                      <InvestmentRow
+                        key={investment.id}
+                        investment={investment}
+                        memberName={memberName(
+                          investment.member_id
+                        )}
+                        invested={invested}
+                        currentValue={currentValue}
+                        profitLoss={profitLoss}
+                        returnPercent={
+                          returnPercent
+                        }
+                        currency={currency}
+                        onEdit={
+                          openEditModal
+                        }
+                        onDelete={
+                          deleteInvestment
+                        }
+                        deleting={deleting}
+                      />
+                    );
+                  }
+                )}
+              </div>
+
+              {/* MOBILE CARDS */}
+
+              <div style={mobileCards}>
+                {filteredInvestments.map(
+                  (investment) => {
+                    const invested = Number(
+                      investment.invested_amount || 0
+                    );
+
+                    const currentValue = Number(
+                      investment.current_value || 0
+                    );
+
+                    const profitLoss = Number(
+                      investment.profit_loss || 0
+                    );
+
+                    const returnPercent =
+                      invested > 0
+                        ? (profitLoss / invested) *
+                          100
+                        : 0;
+
+                    return (
+                      <MobileInvestmentCard
+                        key={investment.id}
+                        investment={investment}
+                        memberName={memberName(
+                          investment.member_id
+                        )}
+                        invested={invested}
+                        currentValue={currentValue}
+                        profitLoss={profitLoss}
+                        returnPercent={
+                          returnPercent
+                        }
+                        currency={currency}
+                        onEdit={
+                          openEditModal
+                        }
+                        onDelete={
+                          deleteInvestment
+                        }
+                        deleting={deleting}
+                      />
+                    );
+                  }
+                )}
+              </div>
+            </>
+          )}
+        </section>
       </div>
 
-      {/* =========================
-          ADD / EDIT MODAL
-      ========================= */}
+      {/* ADD MODAL */}
 
-      {formOpen && (
-        <div
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              closeForm();
-            }
-          }}
-          style={
-            modalOverlay
+      {showAddModal && (
+        <InvestmentModal
+          mode="add"
+          saving={saving}
+          memberName=""
+          members={members}
+          memberId={newMemberId}
+          investedAmount={
+            newInvestedAmount
           }
-        >
-          <div
-            style={
-              modal
-            }
-          >
-            <div
-              style={
-                modalHeader
-              }
-            >
-              <div>
-                <p
-                  style={
-                    cardLabel
-                  }
-                >
-                  {formMode ===
-                  "add"
-                    ? "NEW INVESTMENT"
-                    : "EDIT INVESTMENT"}
-                </p>
-
-                <h2
-                  style={
-                    modalTitle
-                  }
-                >
-                  {formMode ===
-                  "add"
-                    ? "Add Investment"
-                    : editingInvestment?.member_name}
-                </h2>
-
-                <p
-                  style={
-                    modalSubtitle
-                  }
-                >
-                  {formMode ===
-                  "add"
-                    ? "Create a new member investment record."
-                    : "Update this member's portfolio values."}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={
-                  closeForm
-                }
-                disabled={saving}
-                style={
-                  closeButton
-                }
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* MEMBER */}
-
-            <div
-              style={
-                formContainer
-              }
-            >
-              <label
-                style={
-                  labelStyle
-                }
-              >
-                Member
-
-                <select
-                  value={
-                    form.member_id
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setForm({
-                      ...form,
-                      member_id:
-                        event
-                          .target
-                          .value,
-                    })
-                  }
-                  style={
-                    selectStyle
-                  }
-                  disabled={
-                    formMode ===
-                    "edit"
-                  }
-                >
-                  <option
-                    value=""
-                    style={{
-                      background:
-                        "#111",
-                    }}
-                  >
-                    Select a member
-                  </option>
-
-                  {members.map(
-                    (member) => (
-                      <option
-                        key={
-                          member.id
-                        }
-                        value={
-                          member.id
-                        }
-                        style={{
-                          background:
-                            "#111",
-                        }}
-                      >
-                        {
-                          member.full_name
-                        }
-                      </option>
-                    )
-                  )}
-                </select>
-              </label>
-
-              {/* INVESTED */}
-
-              <label
-                style={
-                  labelStyle
-                }
-              >
-                Invested Amount
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={
-                    form.invested_amount
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setForm({
-                      ...form,
-                      invested_amount:
-                        event
-                          .target
-                          .value,
-                    })
-                  }
-                  style={
-                    inputStyle
-                  }
-                  placeholder="₹0"
-                />
-              </label>
-
-              {/* CURRENT */}
-
-              <label
-                style={
-                  labelStyle
-                }
-              >
-                Current Value
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={
-                    form.current_value
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setForm({
-                      ...form,
-                      current_value:
-                        event
-                          .target
-                          .value,
-                    })
-                  }
-                  style={
-                    inputStyle
-                  }
-                  placeholder="₹0"
-                />
-              </label>
-
-              {/* CALCULATION */}
-
-              <div
-                style={
-                  calculationBox
-                }
-              >
-                <div>
-                  <span
-                    style={
-                      calculationLabel
-                    }
-                  >
-                    Profit / Loss
-                  </span>
-
-                  <strong
-                    style={{
-                      display:
-                        "block",
-                      marginTop:
-                        "5px",
-                      fontSize:
-                        "19px",
-                      color:
-                        formProfit >=
-                        0
-                          ? "#34d399"
-                          : "#f87171",
-                    }}
-                  >
-                    {formProfit >=
-                    0
-                      ? "+"
-                      : "-"}
-                    {currency(
-                      Math.abs(
-                        formProfit
-                      )
-                    )}
-                  </strong>
-                </div>
-
-                <div
-                  style={{
-                    textAlign:
-                      "right",
-                  }}
-                >
-                  <span
-                    style={
-                      calculationLabel
-                    }
-                  >
-                    Return
-                  </span>
-
-                  <strong
-                    style={{
-                      display:
-                        "block",
-                      marginTop:
-                        "5px",
-                      fontSize:
-                        "19px",
-                      color:
-                        formReturn >=
-                        0
-                          ? "#34d399"
-                          : "#f87171",
-                    }}
-                  >
-                    {formReturn >=
-                    0
-                      ? "+"
-                      : ""}
-                    {formReturn.toFixed(
-                      2
-                    )}
-                    %
-                  </strong>
-                </div>
-              </div>
-
-              <div
-                style={
-                  infoBox
-                }
-              >
-                <TrendingUp
-                  size={15}
-                />
-
-                <span>
-                  Profit/Loss and
-                  return are calculated
-                  automatically.
-                </span>
-              </div>
-
-              {error && (
-                <div
-                  style={
-                    modalError
-                  }
-                >
-                  {error}
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={
-                  saveInvestment
-                }
-                disabled={
-                  saving
-                }
-                style={{
-                  ...saveButton,
-                  opacity:
-                    saving
-                      ? 0.6
-                      : 1,
-                }}
-              >
-                {formMode ===
-                "add" ? (
-                  <Plus size={17} />
-                ) : (
-                  <Save size={17} />
-                )}
-
-                {saving
-                  ? "Saving..."
-                  : formMode ===
-                    "add"
-                  ? "Create Investment"
-                  : "Save Changes"}
-              </button>
-            </div>
-          </div>
-        </div>
+          currentValue={
+            newCurrentValue
+          }
+          onMemberChange={
+            setNewMemberId
+          }
+          onInvestedChange={
+            setNewInvestedAmount
+          }
+          onCurrentChange={
+            setNewCurrentValue
+          }
+          onClose={closeAddModal}
+          onSubmit={addInvestment}
+        />
       )}
 
-      {/* =========================
-          DELETE CONFIRMATION
-      ========================= */}
+      {/* EDIT MODAL */}
 
-      {deleteTarget && (
-        <div
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              closeDelete();
-            }
-          }}
-          style={
-            modalOverlay
-          }
-        >
-          <div
-            style={
-              deleteModal
-            }
-          >
-            <div
-              style={
-                dangerIcon
-              }
-            >
-              <AlertTriangle
-                size={22}
-              />
-            </div>
-
-            <h2
-              style={
-                deleteTitle
-              }
-            >
-              Delete Investment?
-            </h2>
-
-            <p
-              style={
-                deleteText
-              }
-            >
-              You are about to permanently
-              delete the investment for{" "}
-              <strong>
-                {
-                  deleteTarget.member_name
-                }
-              </strong>
-              .
-            </p>
-
-            <div
-              style={
-                deleteSummary
-              }
-            >
-              <span>
-                Invested
-              </span>
-
-              <strong>
-                {currency(
-                  Number(
-                    deleteTarget.invested_amount
-                  )
-                )}
-              </strong>
-
-              <span>
-                Current Value
-              </span>
-
-              <strong>
-                {currency(
-                  Number(
-                    deleteTarget.current_value
-                  )
-                )}
-              </strong>
-            </div>
-
-            {error && (
-              <div
-                style={
-                  modalError
-                }
-              >
-                {error}
-              </div>
+      {showEditModal &&
+        selectedInvestment && (
+          <InvestmentModal
+            mode="edit"
+            saving={saving}
+            memberName={memberName(
+              selectedInvestment.member_id
             )}
-
-            <div
-              style={
-                deleteActions
-              }
-            >
-              <button
-                type="button"
-                onClick={
-                  closeDelete
-                }
-                disabled={
-                  deleting
-                }
-                style={
-                  cancelButton
-                }
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={
-                  deleteInvestment
-                }
-                disabled={
-                  deleting
-                }
-                style={{
-                  ...confirmDeleteButton,
-                  opacity:
-                    deleting
-                      ? 0.6
-                      : 1,
-                }}
-              >
-                <Trash2
-                  size={16}
-                />
-
-                {deleting
-                  ? "Deleting..."
-                  : "Delete Investment"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            members={members}
+            memberId={
+              selectedInvestment.member_id
+            }
+            investedAmount={
+              editInvestedAmount
+            }
+            currentValue={
+              editCurrentValue
+            }
+            onMemberChange={() => {}}
+            onInvestedChange={
+              setEditInvestedAmount
+            }
+            onCurrentChange={
+              setEditCurrentValue
+            }
+            onClose={closeEditModal}
+            onSubmit={updateInvestment}
+          />
+        )}
     </main>
   );
 }
 
-/* =========================
+/* =========================================================
    SUMMARY CARD
-========================= */
+========================================================= */
 
 function SummaryCard({
   title,
   value,
   icon,
   positive,
+  secondary,
 }: {
   title: string;
   value: string;
   icon: React.ReactNode;
   positive?: boolean;
+  secondary?: string;
 }) {
   return (
-    <div
-      style={
-        summaryCard
-      }
-    >
-      <div
-        style={
-          summaryIcon
-        }
-      >
-        {icon}
+    <div style={summaryCard}>
+      <div style={summaryTop}>
+        <div style={summaryIcon}>
+          {icon}
+        </div>
+
+        {positive !== undefined && (
+          <span
+            style={{
+              ...statusPill,
+              color: positive
+                ? "#34d399"
+                : "#f87171",
+              background: positive
+                ? "rgba(52,211,153,0.08)"
+                : "rgba(248,113,113,0.08)",
+            }}
+          >
+            {positive ? "Positive" : "Negative"}
+          </span>
+        )}
       </div>
 
-      <p
-        style={
-          cardLabel
-        }
-      >
-        {title}
-      </p>
+      <p style={cardLabel}>{title}</p>
 
       <h2
         style={{
-          margin:
-            "8px 0 0",
-          fontSize:
-            "25px",
-          letterSpacing:
-            "-0.7px",
+          ...summaryValue,
           color:
-            positive ===
-            undefined
-              ? "white"
+            positive === undefined
+              ? "#fff"
               : positive
               ? "#34d399"
               : "#f87171",
@@ -1651,852 +936,1576 @@ function SummaryCard({
       >
         {value}
       </h2>
+
+      {secondary && (
+        <p style={summarySecondary}>
+          {secondary}
+        </p>
+      )}
     </div>
   );
 }
 
-/* =========================
+/* =========================================================
+   DESKTOP ROW
+========================================================= */
+
+function InvestmentRow({
+  investment,
+  memberName,
+  invested,
+  currentValue,
+  profitLoss,
+  returnPercent,
+  currency,
+  onEdit,
+  onDelete,
+  deleting,
+}: {
+  investment: Investment;
+  memberName: string;
+  invested: number;
+  currentValue: number;
+  profitLoss: number;
+  returnPercent: number;
+  currency: (value: number) => string;
+  onEdit: (investment: Investment) => void;
+  onDelete: (investment: Investment) => void;
+  deleting: boolean;
+}) {
+  const positive = profitLoss >= 0;
+
+  return (
+    <div style={tableRow}>
+      <div style={memberCell}>
+        <div style={memberAvatar}>
+          {memberName
+            .charAt(0)
+            .toUpperCase()}
+        </div>
+
+        <div style={memberInfo}>
+          <strong style={memberNameText}>
+            {memberName}
+          </strong>
+
+          <span style={memberIdText}>
+            {investment.member_id}
+          </span>
+        </div>
+      </div>
+
+      <div style={moneyCell}>
+        {currency(invested)}
+      </div>
+
+      <div style={moneyCell}>
+        {currency(currentValue)}
+      </div>
+
+      <div>
+        <div
+          style={{
+            ...profitValue,
+            color: positive
+              ? "#34d399"
+              : "#f87171",
+          }}
+        >
+          {positive ? (
+            <TrendingUp size={14} />
+          ) : (
+            <TrendingDown size={14} />
+          )}
+
+          {positive ? "+" : ""}
+          {currency(profitLoss)}
+        </div>
+
+        <span
+          style={{
+            ...returnText,
+            color: positive
+              ? "rgba(52,211,153,0.7)"
+              : "rgba(248,113,113,0.7)",
+          }}
+        >
+          {positive ? "+" : ""}
+          {returnPercent.toFixed(2)}%
+        </span>
+      </div>
+
+      <div>
+        <span style={dateText}>
+          {formatDate(
+            investment.updated_at
+          )}
+        </span>
+      </div>
+
+      <div style={rowActions}>
+        <button
+          type="button"
+          onClick={() =>
+            onEdit(investment)
+          }
+          style={editButton}
+        >
+          <Pencil size={13} />
+          Edit
+        </button>
+
+        <button
+          type="button"
+          disabled={deleting}
+          onClick={() =>
+            onDelete(investment)
+          }
+          style={deleteButton}
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   MOBILE CARD
+========================================================= */
+
+function MobileInvestmentCard({
+  investment,
+  memberName,
+  invested,
+  currentValue,
+  profitLoss,
+  returnPercent,
+  currency,
+  onEdit,
+  onDelete,
+  deleting,
+}: {
+  investment: Investment;
+  memberName: string;
+  invested: number;
+  currentValue: number;
+  profitLoss: number;
+  returnPercent: number;
+  currency: (value: number) => string;
+  onEdit: (investment: Investment) => void;
+  onDelete: (investment: Investment) => void;
+  deleting: boolean;
+}) {
+  const positive = profitLoss >= 0;
+
+  return (
+    <div style={mobileCard}>
+      <div style={mobileCardTop}>
+        <div style={memberCell}>
+          <div style={memberAvatar}>
+            {memberName
+              .charAt(0)
+              .toUpperCase()}
+          </div>
+
+          <div style={memberInfo}>
+            <strong style={memberNameText}>
+              {memberName}
+            </strong>
+
+            <span style={memberIdText}>
+              {investment.member_id}
+            </span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            ...mobileProfit,
+            color: positive
+              ? "#34d399"
+              : "#f87171",
+          }}
+        >
+          {positive ? "+" : ""}
+          {returnPercent.toFixed(2)}%
+        </div>
+      </div>
+
+      <div style={mobileValues}>
+        <div style={mobileValueBox}>
+          <span style={mobileLabel}>
+            INVESTED
+          </span>
+
+          <strong>
+            {currency(invested)}
+          </strong>
+        </div>
+
+        <div style={mobileValueBox}>
+          <span style={mobileLabel}>
+            CURRENT
+          </span>
+
+          <strong>
+            {currency(currentValue)}
+          </strong>
+        </div>
+
+        <div style={mobileValueBox}>
+          <span style={mobileLabel}>
+            P / L
+          </span>
+
+          <strong
+            style={{
+              color: positive
+                ? "#34d399"
+                : "#f87171",
+            }}
+          >
+            {positive ? "+" : ""}
+            {currency(profitLoss)}
+          </strong>
+        </div>
+      </div>
+
+      <div style={mobileCardBottom}>
+        <span style={dateText}>
+          Updated{" "}
+          {formatDate(
+            investment.updated_at
+          )}
+        </span>
+
+        <div style={rowActions}>
+          <button
+            type="button"
+            onClick={() =>
+              onEdit(investment)
+            }
+            style={editButton}
+          >
+            <Pencil size={13} />
+            Edit
+          </button>
+
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={() =>
+              onDelete(investment)
+            }
+            style={deleteButton}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   MODAL
+========================================================= */
+
+function InvestmentModal({
+  mode,
+  saving,
+  memberName,
+  members,
+  memberId,
+  investedAmount,
+  currentValue,
+  onMemberChange,
+  onInvestedChange,
+  onCurrentChange,
+  onClose,
+  onSubmit,
+}: {
+  mode: "add" | "edit";
+  saving: boolean;
+  memberName: string;
+  members: Member[];
+  memberId: string;
+  investedAmount: string;
+  currentValue: string;
+  onMemberChange: (value: string) => void;
+  onInvestedChange: (value: string) => void;
+  onCurrentChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const invested = Number(investedAmount);
+  const current = Number(currentValue);
+
+  const previewProfit =
+    Number.isFinite(invested) &&
+    Number.isFinite(current)
+      ? current - invested
+      : 0;
+
+  const previewPositive =
+    previewProfit >= 0;
+
+  return (
+    <div
+      style={modalOverlay}
+      onMouseDown={(event) => {
+        if (
+          event.target ===
+          event.currentTarget
+        ) {
+          onClose();
+        }
+      }}
+    >
+      <div style={modal}>
+        <div style={modalHeader}>
+          <div>
+            <div style={modalEyebrow}>
+              {mode === "add"
+                ? "NEW POSITION"
+                : "EDIT POSITION"}
+            </div>
+
+            <h2 style={modalTitle}>
+              {mode === "add"
+                ? "Add Investment"
+                : memberName}
+            </h2>
+
+            <p style={modalSubtitle}>
+              {mode === "add"
+                ? "Create a new investment record for a member."
+                : "Update the current investment position."}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={closeButton}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {mode === "add" && (
+          <div style={formGroup}>
+            <label style={formLabel}>
+              Member
+            </label>
+
+            <select
+              value={memberId}
+              onChange={(event) =>
+                onMemberChange(
+                  event.target.value
+                )
+              }
+              style={formInput}
+            >
+              <option value="">
+                Select member
+              </option>
+
+              {members.map((member) => (
+                <option
+                  key={member.id}
+                  value={member.id}
+                >
+                  {member.full_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {mode === "edit" && (
+          <div style={selectedMemberBox}>
+            <div style={memberAvatar}>
+              {memberName
+                .charAt(0)
+                .toUpperCase()}
+            </div>
+
+            <div>
+              <span style={selectedMemberLabel}>
+                MEMBER
+              </span>
+
+              <strong>
+                {memberName}
+              </strong>
+            </div>
+          </div>
+        )}
+
+        <div style={formGroup}>
+          <label style={formLabel}>
+            Invested Amount
+          </label>
+
+          <div style={inputWrapper}>
+            <span style={inputPrefix}>
+              ₹
+            </span>
+
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={investedAmount}
+              onChange={(event) =>
+                onInvestedChange(
+                  event.target.value
+                )
+              }
+              placeholder="0.00"
+              style={numberInput}
+            />
+          </div>
+        </div>
+
+        <div style={formGroup}>
+          <label style={formLabel}>
+            Current Value
+          </label>
+
+          <div style={inputWrapper}>
+            <span style={inputPrefix}>
+              ₹
+            </span>
+
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={currentValue}
+              onChange={(event) =>
+                onCurrentChange(
+                  event.target.value
+                )
+              }
+              placeholder="0.00"
+              style={numberInput}
+            />
+          </div>
+        </div>
+
+        <div style={previewBox}>
+          <div>
+            <span style={previewLabel}>
+              CURRENT PROFIT / LOSS
+            </span>
+
+            <strong
+              style={{
+                ...previewValue,
+                color: previewPositive
+                  ? "#34d399"
+                  : "#f87171",
+              }}
+            >
+              {previewPositive ? "+" : ""}
+              ₹
+              {Math.abs(
+                previewProfit
+              ).toLocaleString(
+                "en-IN",
+                {
+                  maximumFractionDigits: 2,
+                }
+              )}
+            </strong>
+          </div>
+
+          {invested > 0 && (
+            <span
+              style={{
+                ...previewPercent,
+                color: previewPositive
+                  ? "#34d399"
+                  : "#f87171",
+              }}
+            >
+              {previewPositive
+                ? "+"
+                : ""}
+              {(
+                (previewProfit /
+                  invested) *
+                100
+              ).toFixed(2)}
+              %
+            </span>
+          )}
+        </div>
+
+        <p style={modalHint}>
+          Profit / Loss is calculated automatically
+          as Current Value − Invested Amount.
+        </p>
+
+        <div style={modalActions}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            style={cancelButton}
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={saving}
+            style={{
+              ...primaryButton,
+              flex: 1,
+              justifyContent: "center",
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {mode === "add" ? (
+              <Plus size={16} />
+            ) : (
+              <Pencil size={15} />
+            )}
+
+            {saving
+              ? "Saving..."
+              : mode === "add"
+              ? "Create Investment"
+              : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function formatDate(date: string) {
+  return new Date(date).toLocaleString(
+    "en-IN",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }
+  );
+}
+
+/* =========================================================
    STYLES
-========================= */
+========================================================= */
 
 const pageStyle = {
   minHeight: "100vh",
   background:
-    "#050505",
-  color: "white",
-  padding:
-    "35px 25px",
-  fontFamily:
-    "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "radial-gradient(circle at 15% 0%, rgba(255,255,255,0.045), transparent 28%), #050505",
+  color: "#fff",
+  padding: "32px 24px 60px",
 };
 
 const containerStyle = {
-  maxWidth:
-    "1450px",
-  margin:
-    "0 auto",
+  maxWidth: "1280px",
+  margin: "0 auto",
 };
 
 const headerStyle = {
   display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems:
-    "center",
-  gap: "20px",
-  marginBottom:
-    "30px",
+  justifyContent: "space-between",
+  alignItems: "flex-end",
+  gap: "30px",
+  marginBottom: "28px",
 };
 
-const headerButtons = {
-  display: "flex",
-  gap: "9px",
-  alignItems:
-    "center",
+const backButton = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "7px",
+  padding: "8px 11px",
+  marginBottom: "22px",
+  borderRadius: "10px",
+  border:
+    "1px solid rgba(255,255,255,0.08)",
+  background:
+    "rgba(255,255,255,0.035)",
+  color:
+    "rgba(255,255,255,0.55)",
+  cursor: "pointer",
+  fontSize: "12px",
 };
 
 const eyebrowStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "7px",
   margin: 0,
   color:
     "rgba(255,255,255,0.38)",
   fontSize: "10px",
-  letterSpacing:
-    "4px",
-  fontWeight: 600,
+  fontWeight: 700,
+  letterSpacing: "3.5px",
+};
+
+const eyebrowDot = {
+  color:
+    "rgba(255,255,255,0.18)",
 };
 
 const titleStyle = {
-  margin:
-    "8px 0 0",
-  fontSize: "38px",
-  letterSpacing:
-    "-1.7px",
+  margin: "8px 0 0",
+  fontSize: "42px",
+  lineHeight: 1.05,
+  letterSpacing: "-2px",
   fontWeight: 700,
 };
 
 const subtitleStyle = {
-  marginTop:
-    "8px",
+  margin: "10px 0 0",
   color:
-    "rgba(255,255,255,0.42)",
-  fontSize: "14px",
+    "rgba(255,255,255,0.38)",
+  fontSize: "13px",
 };
 
-const addButton = {
+const headerActions = {
   display: "flex",
-  alignItems:
-    "center",
+  alignItems: "center",
+  gap: "9px",
+  flexWrap: "wrap" as const,
+  justifyContent: "flex-end",
+};
+
+const primaryButton = {
+  display: "inline-flex",
+  alignItems: "center",
   gap: "8px",
-  padding:
-    "11px 15px",
-  borderRadius:
-    "13px",
+  padding: "11px 15px",
+  borderRadius: "12px",
   border:
-    "1px solid rgba(255,255,255,0.15)",
-  background:
-    "white",
-  color:
-    "black",
-  cursor:
-    "pointer",
-  fontWeight:
-    600,
+    "1px solid rgba(255,255,255,0.16)",
+  background: "#fff",
+  color: "#050505",
+  cursor: "pointer",
+  fontSize: "12px",
+  fontWeight: 700,
+  boxShadow:
+    "0 8px 25px rgba(0,0,0,0.25)",
 };
 
 const secondaryButton = {
-  display: "flex",
-  alignItems:
-    "center",
+  display: "inline-flex",
+  alignItems: "center",
   gap: "8px",
-  padding:
-    "11px 15px",
-  borderRadius:
-    "13px",
+  padding: "11px 14px",
+  borderRadius: "12px",
   border:
-    "1px solid rgba(255,255,255,0.1)",
+    "1px solid rgba(255,255,255,0.09)",
   background:
-    "rgba(255,255,255,0.05)",
-  color: "white",
-  cursor:
-    "pointer",
-  fontWeight:
-    500,
+    "rgba(255,255,255,0.045)",
+  color:
+    "rgba(255,255,255,0.78)",
+  cursor: "pointer",
+  fontSize: "12px",
+  fontWeight: 600,
+};
+
+const iconButton = {
+  width: "39px",
+  height: "39px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "12px",
+  border:
+    "1px solid rgba(255,255,255,0.09)",
+  background:
+    "rgba(255,255,255,0.045)",
+  color:
+    "rgba(255,255,255,0.65)",
+  cursor: "pointer",
 };
 
 const errorBox = {
-  marginBottom:
-    "18px",
-  padding:
-    "14px 16px",
-  borderRadius:
-    "13px",
-  background:
-    "rgba(248,113,113,0.08)",
+  display: "flex",
+  alignItems: "flex-start",
+  gap: "12px",
+  padding: "13px 15px",
+  marginBottom: "18px",
+  borderRadius: "14px",
   border:
-    "1px solid rgba(248,113,113,0.2)",
+    "1px solid rgba(248,113,113,0.18)",
+  background:
+    "rgba(248,113,113,0.065)",
+};
+
+const errorIcon = {
+  width: "23px",
+  height: "23px",
+  flexShrink: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "50%",
+  background:
+    "rgba(248,113,113,0.12)",
+  color: "#f87171",
+  fontWeight: 800,
+  fontSize: "12px",
+};
+
+const errorTitle = {
+  fontSize: "12px",
+  color: "#fca5a5",
+};
+
+const errorMessage = {
+  margin: "3px 0 0",
   color:
-    "#f87171",
-  fontSize:
-    "13px",
+    "rgba(255,255,255,0.45)",
+  fontSize: "11px",
+  wordBreak: "break-word" as const,
+};
+
+const errorClose = {
+  marginLeft: "auto",
+  border: "none",
+  background: "transparent",
+  color:
+    "rgba(255,255,255,0.4)",
+  cursor: "pointer",
 };
 
 const summaryGrid = {
   display: "grid",
   gridTemplateColumns:
     "repeat(4, minmax(0, 1fr))",
-  gap: "15px",
-  marginBottom:
-    "18px",
+  gap: "13px",
+  marginBottom: "16px",
 };
 
 const summaryCard = {
-  padding:
-    "22px",
-  borderRadius:
-    "21px",
-  background:
-    "linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025))",
+  minWidth: 0,
+  padding: "20px",
+  borderRadius: "19px",
   border:
-    "1px solid rgba(255,255,255,0.09)",
-  backdropFilter:
-    "blur(20px)",
+    "1px solid rgba(255,255,255,0.075)",
+  background:
+    "linear-gradient(145deg, rgba(255,255,255,0.065), rgba(255,255,255,0.022))",
+  boxShadow:
+    "inset 0 1px 0 rgba(255,255,255,0.025)",
+};
+
+const summaryTop = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: "17px",
 };
 
 const summaryIcon = {
-  width: "39px",
-  height: "39px",
-  borderRadius:
-    "12px",
-  background:
-    "rgba(255,255,255,0.07)",
+  width: "35px",
+  height: "35px",
   display: "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  marginBottom:
-    "17px",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "10px",
+  background:
+    "rgba(255,255,255,0.065)",
+  color:
+    "rgba(255,255,255,0.75)",
+};
+
+const statusPill = {
+  padding: "5px 8px",
+  borderRadius: "8px",
+  fontSize: "9px",
+  fontWeight: 700,
 };
 
 const cardLabel = {
   margin: 0,
   color:
-    "rgba(255,255,255,0.4)",
+    "rgba(255,255,255,0.36)",
   fontSize: "10px",
-  letterSpacing:
-    "1.4px",
-  textTransform:
-    "uppercase" as const,
+  letterSpacing: "1.2px",
+  fontWeight: 600,
 };
 
-const tableSection = {
-  padding:
-    "26px",
-  borderRadius:
-    "24px",
-  background:
-    "rgba(255,255,255,0.04)",
+const summaryValue = {
+  margin: "7px 0 0",
+  fontSize: "24px",
+  lineHeight: 1.1,
+  letterSpacing: "-0.7px",
+};
+
+const summarySecondary = {
+  margin: "7px 0 0",
+  color:
+    "rgba(255,255,255,0.28)",
+  fontSize: "10px",
+};
+
+const sectionStyle = {
+  borderRadius: "22px",
   border:
-    "1px solid rgba(255,255,255,0.08)",
-  backdropFilter:
-    "blur(20px)",
+    "1px solid rgba(255,255,255,0.075)",
+  background:
+    "rgba(255,255,255,0.028)",
+  overflow: "hidden",
 };
 
-const sectionHeader = {
+const sectionTop = {
   display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems:
-    "center",
-  marginBottom:
-    "24px",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "20px",
+  padding: "23px 24px 18px",
+};
+
+const sectionEyebrow = {
+  color:
+    "rgba(255,255,255,0.27)",
+  fontSize: "9px",
+  letterSpacing: "2px",
+  fontWeight: 700,
 };
 
 const sectionTitle = {
-  margin:
-    "7px 0 0",
-  fontSize:
-    "23px",
-  letterSpacing:
-    "-0.5px",
+  margin: "7px 0 0",
+  fontSize: "21px",
+  letterSpacing: "-0.5px",
 };
 
 const sectionSubtitle = {
-  marginTop:
-    "5px",
+  margin: "5px 0 0",
   color:
     "rgba(255,255,255,0.32)",
-  fontSize:
-    "12px",
+  fontSize: "11px",
 };
 
-const portfolioBadge = {
+const sectionRight = {
+  flexShrink: 0,
+};
+
+const recordBadge = {
   display: "flex",
-  alignItems:
-    "center",
+  alignItems: "center",
   gap: "7px",
-  padding:
-    "8px 11px",
-  borderRadius:
-    "999px",
+  padding: "7px 10px",
+  borderRadius: "9px",
   background:
-    "rgba(52,211,153,0.07)",
+    "rgba(255,255,255,0.035)",
   border:
-    "1px solid rgba(52,211,153,0.15)",
+    "1px solid rgba(255,255,255,0.06)",
   color:
-    "#34d399",
-  fontSize:
-    "11px",
-  fontWeight:
-    600,
+    "rgba(255,255,255,0.38)",
+  fontSize: "10px",
 };
 
-const tableWrapper = {
+const recordDot = {
+  width: "5px",
+  height: "5px",
+  borderRadius: "50%",
+  background: "#34d399",
+  boxShadow:
+    "0 0 8px rgba(52,211,153,0.6)",
+};
+
+const searchWrapper = {
+  position: "relative" as const,
   display: "flex",
-  flexDirection:
-    "column" as const,
-  gap: "7px",
+  alignItems: "center",
+  margin: "0 24px 14px",
+};
+
+const searchIcon = {
+  position: "absolute" as const,
+  left: "13px",
+  color:
+    "rgba(255,255,255,0.3)",
+  pointerEvents: "none" as const,
+};
+
+const searchInput = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  padding: "11px 40px",
+  borderRadius: "11px",
+  border:
+    "1px solid rgba(255,255,255,0.07)",
+  background:
+    "rgba(255,255,255,0.035)",
+  color: "white",
+  outline: "none",
+  fontSize: "12px",
+};
+
+const searchClear = {
+  position: "absolute" as const,
+  right: "9px",
+  width: "25px",
+  height: "25px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  border: "none",
+  borderRadius: "7px",
+  background:
+    "rgba(255,255,255,0.06)",
+  color:
+    "rgba(255,255,255,0.45)",
+  cursor: "pointer",
+};
+
+const desktopTable = {
+  width: "100%",
+  overflowX: "auto" as const,
+  padding: "0 12px 12px",
 };
 
 const tableHeader = {
+  minWidth: "1050px",
   display: "grid",
   gridTemplateColumns:
-    "1.5fr 1fr 1.1fr 1fr 0.8fr 1.3fr 70px",
+    "1.6fr 1fr 1.1fr 1.15fr 1.15fr 1fr",
   gap: "14px",
-  padding:
-    "0 15px 9px",
+  padding: "11px 12px",
   color:
-    "rgba(255,255,255,0.25)",
-  fontSize:
-    "9px",
-  letterSpacing:
-    "1.1px",
+    "rgba(255,255,255,0.23)",
+  fontSize: "9px",
+  letterSpacing: "1.1px",
+  fontWeight: 700,
 };
 
 const tableRow = {
+  minWidth: "1050px",
   display: "grid",
   gridTemplateColumns:
-    "1.5fr 1fr 1.1fr 1fr 0.8fr 1.3fr 70px",
+    "1.6fr 1fr 1.1fr 1.15fr 1.15fr 1fr",
   gap: "14px",
-  alignItems:
-    "center",
-  padding:
-    "16px 15px",
-  borderRadius:
-    "15px",
-  background:
-    "rgba(0,0,0,0.22)",
+  alignItems: "center",
+  padding: "14px 12px",
+  marginBottom: "6px",
+  borderRadius: "13px",
   border:
-    "1px solid rgba(255,255,255,0.06)",
-  fontSize:
-    "13px",
+    "1px solid rgba(255,255,255,0.055)",
+  background:
+    "rgba(0,0,0,0.18)",
+};
+
+const memberCell = {
+  display: "flex",
+  alignItems: "center",
+  gap: "10px",
+  minWidth: 0,
+};
+
+const memberAvatar = {
+  width: "34px",
+  height: "34px",
+  flexShrink: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "10px",
+  background:
+    "linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.045))",
+  border:
+    "1px solid rgba(255,255,255,0.08)",
+  color:
+    "rgba(255,255,255,0.72)",
+  fontSize: "12px",
+  fontWeight: 700,
+};
+
+const memberInfo = {
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "3px",
+};
+
+const memberNameText = {
+  fontSize: "12px",
+  whiteSpace: "nowrap" as const,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+const memberIdText = {
+  color:
+    "rgba(255,255,255,0.2)",
+  fontSize: "8px",
+  whiteSpace: "nowrap" as const,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+const moneyCell = {
+  color:
+    "rgba(255,255,255,0.78)",
+  fontSize: "12px",
+  fontWeight: 600,
+};
+
+const profitValue = {
+  display: "flex",
+  alignItems: "center",
+  gap: "5px",
+  fontSize: "12px",
+  fontWeight: 700,
+};
+
+const returnText = {
+  display: "block",
+  marginTop: "3px",
+  fontSize: "9px",
+  fontWeight: 600,
+};
+
+const dateText = {
+  color:
+    "rgba(255,255,255,0.3)",
+  fontSize: "9px",
 };
 
 const rowActions = {
   display: "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "flex-end",
+  alignItems: "center",
   gap: "6px",
 };
 
 const editButton = {
-  width: "31px",
-  height: "31px",
-  display: "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  borderRadius:
-    "9px",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "5px",
+  padding: "7px 9px",
+  borderRadius: "8px",
   border:
-    "1px solid rgba(255,255,255,0.1)",
+    "1px solid rgba(255,255,255,0.07)",
   background:
-    "rgba(255,255,255,0.05)",
+    "rgba(255,255,255,0.045)",
   color:
-    "white",
-  cursor:
-    "pointer",
+    "rgba(255,255,255,0.7)",
+  cursor: "pointer",
+  fontSize: "10px",
+  fontWeight: 600,
 };
 
 const deleteButton = {
-  width: "31px",
-  height: "31px",
-  display: "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  borderRadius:
-    "9px",
+  width: "30px",
+  height: "30px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "8px",
   border:
-    "1px solid rgba(248,113,113,0.15)",
+    "1px solid rgba(248,113,113,0.14)",
   background:
-    "rgba(248,113,113,0.06)",
+    "rgba(248,113,113,0.055)",
   color:
-    "#f87171",
-  cursor:
-    "pointer",
+    "rgba(248,113,113,0.75)",
+  cursor: "pointer",
+};
+
+const mobileCards = {
+  display: "none",
+};
+
+const mobileCard = {
+  margin: "0 12px 8px",
+  padding: "16px",
+  borderRadius: "15px",
+  border:
+    "1px solid rgba(255,255,255,0.06)",
+  background:
+    "rgba(0,0,0,0.18)",
+};
+
+const mobileCardTop = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "15px",
+};
+
+const mobileProfit = {
+  fontSize: "12px",
+  fontWeight: 700,
+};
+
+const mobileValues = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(3, minmax(0, 1fr))",
+  gap: "8px",
+  marginTop: "15px",
+};
+
+const mobileValueBox = {
+  padding: "10px",
+  borderRadius: "10px",
+  background:
+    "rgba(255,255,255,0.035)",
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "5px",
+};
+
+const mobileLabel = {
+  color:
+    "rgba(255,255,255,0.25)",
+  fontSize: "8px",
+  letterSpacing: "0.7px",
+};
+
+const mobileCardBottom = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "10px",
+  marginTop: "14px",
 };
 
 const emptyState = {
-  minHeight:
-    "230px",
+  minHeight: "330px",
   display: "flex",
-  flexDirection:
-    "column" as const,
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  gap: "10px",
-  borderRadius:
-    "17px",
-  background:
-    "rgba(0,0,0,0.2)",
-  color:
-    "rgba(255,255,255,0.4)",
+  flexDirection: "column" as const,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "30px",
+  textAlign: "center" as const,
 };
 
-const emptyAddButton = {
-  marginTop:
-    "5px",
+const emptyIcon = {
+  width: "62px",
+  height: "62px",
   display: "flex",
-  alignItems:
-    "center",
-  gap: "7px",
-  padding:
-    "10px 14px",
-  borderRadius:
-    "11px",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  background:
-    "rgba(255,255,255,0.06)",
-  color:
-    "white",
-  cursor:
-    "pointer",
-  fontSize:
-    "12px",
-  fontWeight:
-    600,
-};
-
-const modalOverlay = {
-  position:
-    "fixed" as const,
-  inset: 0,
-  zIndex:
-    9999,
-  display: "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  padding:
-    "20px",
-  background:
-    "rgba(0,0,0,0.78)",
-  backdropFilter:
-    "blur(14px)",
-};
-
-const modal = {
-  width:
-    "100%",
-  maxWidth:
-    "500px",
-  maxHeight:
-    "90vh",
-  overflowY:
-    "auto" as const,
-  padding:
-    "30px",
-  borderRadius:
-    "25px",
-  background:
-    "#111",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  boxShadow:
-    "0 30px 100px rgba(0,0,0,0.6)",
-};
-
-const modalHeader = {
-  display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems:
-    "flex-start",
-  gap:
-    "15px",
-  marginBottom:
-    "23px",
-};
-
-const modalTitle = {
-  margin:
-    "7px 0 0",
-  fontSize:
-    "24px",
-  letterSpacing:
-    "-0.5px",
-};
-
-const modalSubtitle = {
-  marginTop:
-    "5px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize:
-    "13px",
-};
-
-const closeButton = {
-  width:
-    "36px",
-  height:
-    "36px",
-  borderRadius:
-    "50%",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  background:
-    "rgba(255,255,255,0.06)",
-  color:
-    "white",
-  display:
-    "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  cursor:
-    "pointer",
-};
-
-const formContainer = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap:
-    "15px",
-};
-
-const labelStyle = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap:
-    "7px",
-  color:
-    "rgba(255,255,255,0.55)",
-  fontSize:
-    "12px",
-};
-
-const inputStyle = {
-  width:
-    "100%",
-  boxSizing:
-    "border-box" as const,
-  padding:
-    "14px",
-  borderRadius:
-    "12px",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  background:
-    "rgba(255,255,255,0.06)",
-  color:
-    "white",
-  outline:
-    "none",
-  fontSize:
-    "15px",
-};
-
-const selectStyle = {
-  width:
-    "100%",
-  boxSizing:
-    "border-box" as const,
-  padding:
-    "14px",
-  borderRadius:
-    "12px",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  background:
-    "#151515",
-  color:
-    "white",
-  outline:
-    "none",
-  fontSize:
-    "15px",
-  cursor:
-    "pointer",
-};
-
-const calculationBox = {
-  display:
-    "flex",
-  justifyContent:
-    "space-between",
-  gap:
-    "20px",
-  padding:
-    "16px",
-  borderRadius:
-    "15px",
+  alignItems: "center",
+  justifyContent: "center",
+  marginBottom: "16px",
+  borderRadius: "19px",
   background:
     "rgba(255,255,255,0.045)",
   border:
     "1px solid rgba(255,255,255,0.07)",
-};
-
-const calculationLabel = {
   color:
     "rgba(255,255,255,0.35)",
-  fontSize:
-    "10px",
-  letterSpacing:
-    "1px",
-  textTransform:
-    "uppercase" as const,
 };
 
-const infoBox = {
-  display:
-    "flex",
-  alignItems:
-    "flex-start",
-  gap:
-    "9px",
-  padding:
-    "12px 13px",
-  borderRadius:
-    "12px",
-  background:
-    "rgba(255,255,255,0.035)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
+const emptyTitle = {
+  margin: 0,
+  fontSize: "17px",
+};
+
+const emptyText = {
+  maxWidth: "340px",
+  margin: "7px 0 18px",
   color:
-    "rgba(255,255,255,0.4)",
-  fontSize:
-    "11px",
-  lineHeight:
-    1.5,
+    "rgba(255,255,255,0.3)",
+  fontSize: "11px",
+  lineHeight: 1.6,
 };
 
-const saveButton = {
-  marginTop:
-    "3px",
-  display:
-    "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  gap:
-    "8px",
-  padding:
-    "14px",
-  borderRadius:
-    "13px",
-  border:
-    "none",
-  background:
-    "white",
+const emptySearchState = {
+  minHeight: "220px",
+  display: "flex",
+  flexDirection: "column" as const,
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "10px",
   color:
-    "black",
-  fontWeight:
-    600,
-  cursor:
-    "pointer",
+    "rgba(255,255,255,0.3)",
+  fontSize: "12px",
 };
 
-const modalError = {
-  padding:
-    "12px 14px",
-  borderRadius:
-    "12px",
+const loadingContainer = {
+  minHeight: "100vh",
+  display: "flex",
+  flexDirection: "column" as const,
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const loadingOrb = {
+  width: "46px",
+  height: "46px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  marginBottom: "13px",
+  borderRadius: "14px",
   background:
-    "rgba(248,113,113,0.1)",
+    "rgba(255,255,255,0.06)",
   border:
-    "1px solid rgba(248,113,113,0.2)",
+    "1px solid rgba(255,255,255,0.08)",
   color:
-    "#f87171",
-  fontSize:
-    "13px",
+    "rgba(255,255,255,0.6)",
 };
 
-/* =========================
-   DELETE MODAL
-========================= */
+const loadingText = {
+  margin: 0,
+  color:
+    "rgba(255,255,255,0.65)",
+  fontSize: "13px",
+};
 
-const deleteModal = {
-  width:
-    "100%",
-  maxWidth:
-    "430px",
-  padding:
-    "30px",
-  borderRadius:
-    "25px",
+const loadingSubtext = {
+  marginTop: "5px",
+  color:
+    "rgba(255,255,255,0.25)",
+  fontSize: "10px",
+};
+
+/* =========================================================
+   MODAL STYLES
+========================================================= */
+
+const modalOverlay = {
+  position: "fixed" as const,
+  inset: 0,
+  zIndex: 9999,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "20px",
   background:
-    "#111",
-  border:
-    "1px solid rgba(248,113,113,0.15)",
-  boxShadow:
-    "0 30px 100px rgba(0,0,0,0.7)",
+    "rgba(0,0,0,0.78)",
+  backdropFilter: "blur(18px)",
 };
 
-const dangerIcon = {
-  width:
-    "46px",
-  height:
-    "46px",
-  borderRadius:
-    "14px",
-  display:
-    "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  background:
-    "rgba(248,113,113,0.1)",
-  border:
-    "1px solid rgba(248,113,113,0.18)",
-  color:
-    "#f87171",
-  marginBottom:
-    "17px",
-};
-
-const deleteTitle = {
-  margin:
-    "0",
-  fontSize:
-    "23px",
-  letterSpacing:
-    "-0.5px",
-};
-
-const deleteText = {
-  marginTop:
-    "10px",
-  color:
-    "rgba(255,255,255,0.45)",
-  fontSize:
-    "13px",
-  lineHeight:
-    1.6,
-};
-
-const deleteSummary = {
-  display:
-    "grid",
-  gridTemplateColumns:
-    "1fr auto",
-  gap:
-    "10px",
-  marginTop:
-    "18px",
-  padding:
-    "15px",
-  borderRadius:
-    "14px",
-  background:
-    "rgba(255,255,255,0.04)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-  fontSize:
-    "12px",
-  color:
-    "rgba(255,255,255,0.4)",
-};
-
-const deleteActions = {
-  display:
-    "grid",
-  gridTemplateColumns:
-    "1fr 1fr",
-  gap:
-    "10px",
-  marginTop:
-    "20px",
-};
-
-const cancelButton = {
-  padding:
-    "13px",
-  borderRadius:
-    "13px",
+const modal = {
+  width: "100%",
+  maxWidth: "510px",
+  maxHeight: "90vh",
+  overflowY: "auto" as const,
+  padding: "27px",
+  borderRadius: "23px",
   border:
     "1px solid rgba(255,255,255,0.1)",
   background:
-    "rgba(255,255,255,0.05)",
-  color:
-    "white",
-  cursor:
-    "pointer",
-  fontWeight:
-    600,
+    "linear-gradient(145deg, #151515, #0d0d0d)",
+  boxShadow:
+    "0 35px 100px rgba(0,0,0,0.7)",
 };
 
-const confirmDeleteButton = {
-  display:
-    "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  gap:
-    "7px",
-  padding:
-    "13px",
-  borderRadius:
-    "13px",
+const modalHeader = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: "20px",
+  marginBottom: "25px",
+};
+
+const modalEyebrow = {
+  color:
+    "rgba(255,255,255,0.3)",
+  fontSize: "9px",
+  letterSpacing: "2.2px",
+  fontWeight: 700,
+};
+
+const modalTitle = {
+  margin: "7px 0 0",
+  fontSize: "24px",
+  letterSpacing: "-0.7px",
+};
+
+const modalSubtitle = {
+  margin: "6px 0 0",
+  color:
+    "rgba(255,255,255,0.35)",
+  fontSize: "11px",
+  lineHeight: 1.5,
+};
+
+const closeButton = {
+  width: "34px",
+  height: "34px",
+  flexShrink: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: "10px",
   border:
-    "1px solid rgba(248,113,113,0.2)",
+    "1px solid rgba(255,255,255,0.08)",
   background:
-    "rgba(248,113,113,0.1)",
+    "rgba(255,255,255,0.045)",
   color:
-    "#f87171",
-  cursor:
-    "pointer",
-  fontWeight:
-    600,
+    "rgba(255,255,255,0.65)",
+  cursor: "pointer",
 };
 
-const loadingStyle = {
-  minHeight:
-    "100vh",
-  display:
-    "flex",
-  alignItems:
-    "center",
-  justifyContent:
-    "center",
-  color:
-    "rgba(255,255,255,0.5)",
+const formGroup = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "7px",
+  marginBottom: "16px",
 };
 
-const footerStyle = {
-  marginTop:
-    "22px",
-  textAlign:
-    "center" as const,
+const formLabel = {
+  color:
+    "rgba(255,255,255,0.55)",
+  fontSize: "10px",
+  fontWeight: 600,
+  letterSpacing: "0.2px",
+};
+
+const formInput = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  padding: "12px 13px",
+  borderRadius: "11px",
+  border:
+    "1px solid rgba(255,255,255,0.08)",
+  background:
+    "rgba(255,255,255,0.045)",
+  color: "#fff",
+  outline: "none",
+  fontSize: "12px",
+};
+
+const inputWrapper = {
+  position: "relative" as const,
+  display: "flex",
+  alignItems: "center",
+};
+
+const inputPrefix = {
+  position: "absolute" as const,
+  left: "13px",
+  color:
+    "rgba(255,255,255,0.35)",
+  fontSize: "13px",
+  pointerEvents: "none" as const,
+};
+
+const numberInput = {
+  width: "100%",
+  boxSizing: "border-box" as const,
+  padding: "12px 13px 12px 28px",
+  borderRadius: "11px",
+  border:
+    "1px solid rgba(255,255,255,0.08)",
+  background:
+    "rgba(255,255,255,0.045)",
+  color: "#fff",
+  outline: "none",
+  fontSize: "13px",
+};
+
+const selectedMemberBox = {
+  display: "flex",
+  alignItems: "center",
+  gap: "10px",
+  padding: "11px",
+  marginBottom: "16px",
+  borderRadius: "12px",
+  border:
+    "1px solid rgba(255,255,255,0.07)",
+  background:
+    "rgba(255,255,255,0.035)",
+};
+
+const selectedMemberLabel = {
+  display: "block",
+  marginBottom: "3px",
   color:
     "rgba(255,255,255,0.25)",
-  fontSize:
-    "11px",
+  fontSize: "8px",
+  letterSpacing: "1px",
 };
 
-/* =========================
-   GLOBAL ANIMATION
-========================= */
+const previewBox = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "20px",
+  padding: "14px",
+  marginTop: "3px",
+  borderRadius: "13px",
+  background:
+    "rgba(255,255,255,0.035)",
+  border:
+    "1px solid rgba(255,255,255,0.065)",
+};
 
-if (
-  typeof document !==
-    "undefined" &&
-  !document.getElementById(
-    "tradebishi-investment-styles"
-  )
-) {
-  const style =
-    document.createElement(
-      "style"
-    );
+const previewLabel = {
+  display: "block",
+  marginBottom: "4px",
+  color:
+    "rgba(255,255,255,0.25)",
+  fontSize: "8px",
+  letterSpacing: "1px",
+};
 
-  style.id =
-    "tradebishi-investment-styles";
+const previewValue = {
+  display: "block",
+  fontSize: "17px",
+};
 
-  style.innerHTML = `
-    @keyframes spin {
-      from {
-        transform: rotate(0deg);
+const previewPercent = {
+  fontSize: "12px",
+  fontWeight: 700,
+};
+
+const modalHint = {
+  margin: "9px 2px 0",
+  color:
+    "rgba(255,255,255,0.25)",
+  fontSize: "9px",
+  lineHeight: 1.5,
+};
+
+const modalActions = {
+  display: "flex",
+  gap: "9px",
+  marginTop: "22px",
+};
+
+const cancelButton = {
+  padding: "12px 17px",
+  borderRadius: "11px",
+  border:
+    "1px solid rgba(255,255,255,0.08)",
+  background:
+    "rgba(255,255,255,0.045)",
+  color:
+    "rgba(255,255,255,0.7)",
+  cursor: "pointer",
+  fontSize: "11px",
+  fontWeight: 600,
+};
+
+/* =========================================================
+   RESPONSIVE CSS
+========================================================= */
+
+if (typeof document !== "undefined") {
+  const styleId =
+    "tradebishi-investments-responsive";
+
+  if (!document.getElementById(styleId)) {
+    const style =
+      document.createElement("style");
+
+    style.id = styleId;
+
+    style.innerHTML = `
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
 
-      to {
-        transform: rotate(360deg);
+      input::placeholder {
+        color: rgba(255,255,255,0.22);
       }
-    }
 
-    button {
-      transition:
-        filter 0.15s ease,
-        background 0.15s ease,
-        border-color 0.15s ease,
-        transform 0.15s ease;
-    }
-
-    button:hover:not(:disabled) {
-      filter: brightness(1.12);
-    }
-
-    button:active:not(:disabled) {
-      transform: scale(0.98);
-    }
-
-    input::placeholder {
-      color: rgba(255,255,255,0.2);
-    }
-
-    @media (max-width: 1150px) {
-      body {
-        overflow-x: auto;
+      select option {
+        background: #111;
+        color: white;
       }
-    }
-  `;
 
-  document.head.appendChild(
-    style
-  );
+      @media (max-width: 1000px) {
+        .tradebishi-investment-page {
+          padding: 25px 18px 50px;
+        }
+      }
+
+      @media (max-width: 850px) {
+        .tradebishi-summary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+
+        .tradebishi-header {
+          align-items: flex-start !important;
+          flex-direction: column !important;
+        }
+
+        .tradebishi-header-actions {
+          justify-content: flex-start !important;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .tradebishi-investment-page {
+          padding: 20px 12px 45px !important;
+        }
+
+        .tradebishi-title {
+          font-size: 34px !important;
+        }
+
+        .tradebishi-summary-grid {
+          gap: 9px !important;
+        }
+
+        .tradebishi-summary-card {
+          padding: 16px !important;
+        }
+
+        .tradebishi-summary-value {
+          font-size: 20px !important;
+        }
+
+        .tradebishi-desktop-table {
+          display: none !important;
+        }
+
+        .tradebishi-mobile-cards {
+          display: block !important;
+        }
+      }
+
+      @media (min-width: 701px) {
+        .tradebishi-desktop-table {
+          display: block !important;
+        }
+
+        .tradebishi-mobile-cards {
+          display: none !important;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .tradebishi-summary-grid {
+          grid-template-columns: 1fr !important;
+        }
+
+        .tradebishi-header-actions button {
+          flex: 1;
+          justify-content: center;
+        }
+
+        .tradebishi-section-top {
+          align-items: flex-start !important;
+          flex-direction: column !important;
+        }
+
+        .tradebishi-modal {
+          padding: 21px !important;
+        }
+
+        .tradebishi-mobile-values {
+          grid-template-columns: 1fr !important;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
 }

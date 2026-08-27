@@ -12,6 +12,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Activity,
+  Receipt,
+  ChevronRight,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
@@ -23,26 +25,20 @@ type DashboardStats = {
   totalInvested: number;
   currentPortfolio: number;
   profitLoss: number;
+  totalWithdrawals: number;
+  pendingWithdrawals: number;
+  totalExpenses: number;
 };
 
-type RecentDeposit = {
+type ActivityItem = {
   id: string;
-  member_id: string;
+  member_id: string | null;
+  type: string;
   amount: number;
-  method: string;
+  description: string | null;
   status: string;
   created_at: string;
-  member_name: string;
-};
-
-type RecentInvestment = {
-  id: string;
-  member_id: string;
-  invested_amount: number;
-  current_value: number;
-  profit_loss: number;
-  updated_at: string;
-  member_name: string;
+  member_name: string | null;
 };
 
 type Member = {
@@ -55,22 +51,20 @@ export default function AdminDashboard() {
 
   const [adminName, setAdminName] = useState("Admin");
 
-  const [stats, setStats] =
-    useState<DashboardStats>({
-      totalMembers: 0,
-      totalDeposits: 0,
-      approvedCapital: 0,
-      pendingDeposits: 0,
-      totalInvested: 0,
-      currentPortfolio: 0,
-      profitLoss: 0,
-    });
+  const [stats, setStats] = useState<DashboardStats>({
+    totalMembers: 0,
+    totalDeposits: 0,
+    approvedCapital: 0,
+    pendingDeposits: 0,
+    totalInvested: 0,
+    currentPortfolio: 0,
+    profitLoss: 0,
+    totalWithdrawals: 0,
+    pendingWithdrawals: 0,
+    totalExpenses: 0,
+  });
 
-  const [recentDeposits, setRecentDeposits] =
-    useState<RecentDeposit[]>([]);
-
-  const [recentInvestments, setRecentInvestments] =
-    useState<RecentInvestment[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -80,10 +74,8 @@ export default function AdminDashboard() {
     loadDashboard();
   }, []);
 
-  async function loadDashboard() {
+  async function getAdmin() {
     const supabase = createClient();
-
-    setError("");
 
     const {
       data: { user },
@@ -91,31 +83,46 @@ export default function AdminDashboard() {
 
     if (!user) {
       router.replace("/login");
-      return;
+      return null;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("full_name, role")
-        .eq("id", user.id)
-        .single();
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("full_name, role")
+      .eq("id", user.id)
+      .single();
 
-    if (
-      profileError ||
-      !profile ||
-      profile.role !== "admin"
-    ) {
+    if (error || !profile || profile.role !== "admin") {
       router.replace("/");
+      return null;
+    }
+
+    return {
+      user,
+      profile,
+    };
+  }
+
+  async function loadDashboard() {
+    setError("");
+
+    const supabase = createClient();
+
+    const admin = await getAdmin();
+
+    if (!admin) {
+      setLoading(false);
       return;
     }
 
-    setAdminName(profile.full_name || "Admin");
+    setAdminName(admin.profile.full_name || "Admin");
 
     const [
       membersResult,
       depositsResult,
       investmentsResult,
+      transactionsResult,
+      withdrawalsResult,
     ] = await Promise.all([
       supabase
         .from("members")
@@ -123,9 +130,7 @@ export default function AdminDashboard() {
 
       supabase
         .from("deposits")
-        .select(
-          "id, member_id, amount, method, status, created_at"
-        )
+        .select("id, member_id, amount, status, created_at")
         .order("created_at", {
           ascending: false,
         }),
@@ -134,8 +139,22 @@ export default function AdminDashboard() {
         .from("investments")
         .select(
           "id, member_id, invested_amount, current_value, profit_loss, updated_at"
+        ),
+
+      supabase
+        .from("transactions")
+        .select(
+          "id, member_id, type, amount, description, status, created_at"
         )
-        .order("updated_at", {
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(100),
+
+      supabase
+        .from("withdrawals")
+        .select("id, member_id, amount, status, created_at")
+        .order("created_at", {
           ascending: false,
         }),
     ]);
@@ -158,14 +177,24 @@ export default function AdminDashboard() {
       return;
     }
 
-    const members =
-      (membersResult.data ?? []) as Member[];
+    if (transactionsResult.error) {
+      setError(transactionsResult.error.message);
+      setLoading(false);
+      return;
+    }
 
-    const deposits =
-      depositsResult.data ?? [];
+    if (withdrawalsResult.error) {
+      setError(withdrawalsResult.error.message);
+      setLoading(false);
+      return;
+    }
 
-    const investments =
-      investmentsResult.data ?? [];
+    const members = (membersResult.data ?? []) as Member[];
+
+    const deposits = depositsResult.data ?? [];
+    const investments = investmentsResult.data ?? [];
+    const transactions = transactionsResult.data ?? [];
+    const withdrawals = withdrawalsResult.data ?? [];
 
     const memberMap = new Map(
       members.map((member) => [
@@ -174,79 +203,79 @@ export default function AdminDashboard() {
       ])
     );
 
-    const totalDeposits = deposits.reduce(
-      (sum, deposit) =>
-        sum + Number(deposit.amount || 0),
-      0
-    );
-
     const approvedCapital = deposits
       .filter(
-        (deposit) =>
-          deposit.status?.toLowerCase() ===
-          "approved"
+        (item) =>
+          item.status?.toLowerCase() === "approved"
       )
       .reduce(
-        (sum, deposit) =>
-          sum + Number(deposit.amount || 0),
+        (sum, item) => sum + Number(item.amount || 0),
         0
       );
 
+    const totalDeposits = deposits.reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0
+    );
+
     const pendingDeposits = deposits.filter(
-      (deposit) =>
-        deposit.status?.toLowerCase() ===
-        "pending"
+      (item) =>
+        item.status?.toLowerCase() === "pending"
     ).length;
 
     const totalInvested = investments.reduce(
-      (sum, investment) =>
-        sum +
-        Number(
-          investment.invested_amount || 0
-        ),
+      (sum, item) =>
+        sum + Number(item.invested_amount || 0),
       0
     );
 
-    const currentPortfolio =
-      investments.reduce(
-        (sum, investment) =>
-          sum +
-          Number(
-            investment.current_value || 0
-          ),
+    const currentPortfolio = investments.reduce(
+      (sum, item) =>
+        sum + Number(item.current_value || 0),
+      0
+    );
+
+    const profitLoss = investments.reduce(
+      (sum, item) =>
+        sum + Number(item.profit_loss || 0),
+      0
+    );
+
+    const totalWithdrawals = withdrawals
+      .filter(
+        (item) =>
+          item.status?.toLowerCase() === "approved"
+      )
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
         0
       );
 
-    const profitLoss = investments.reduce(
-      (sum, investment) =>
-        sum +
-        Number(
-          investment.profit_loss || 0
-        ),
-      0
-    );
+    const pendingWithdrawals = withdrawals.filter(
+      (item) =>
+        item.status?.toLowerCase() === "pending"
+    ).length;
 
-    const mappedDeposits =
-      deposits
-        .slice(0, 6)
-        .map((deposit) => ({
-          ...deposit,
-          member_name:
-            memberMap.get(
-              deposit.member_id
-            ) || "Unknown Member",
-        }));
+    const totalExpenses = transactions
+      .filter(
+        (item) =>
+          item.type?.toLowerCase() === "expense" &&
+          item.status?.toLowerCase() !== "cancelled"
+      )
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
 
-    const mappedInvestments =
-      investments
-        .slice(0, 6)
-        .map((investment) => ({
-          ...investment,
-          member_name:
-            memberMap.get(
-              investment.member_id
-            ) || "Unknown Member",
-        }));
+    const mappedActivities: ActivityItem[] =
+      transactions.map((item) => ({
+        ...item,
+        amount: Number(item.amount || 0),
+        member_name: item.member_id
+          ? memberMap.get(item.member_id) ||
+            "Unknown Member"
+          : null,
+      }));
 
     setStats({
       totalMembers: members.length,
@@ -256,24 +285,19 @@ export default function AdminDashboard() {
       totalInvested,
       currentPortfolio,
       profitLoss,
+      totalWithdrawals,
+      pendingWithdrawals,
+      totalExpenses,
     });
 
-    setRecentDeposits(
-      mappedDeposits as RecentDeposit[]
-    );
-
-    setRecentInvestments(
-      mappedInvestments as RecentInvestment[]
-    );
+    setActivities(mappedActivities.slice(0, 8));
 
     setLoading(false);
   }
 
   async function refreshDashboard() {
     setRefreshing(true);
-
     await loadDashboard();
-
     setRefreshing(false);
   }
 
@@ -286,9 +310,44 @@ export default function AdminDashboard() {
   }
 
   function currency(value: number) {
-    return `₹${value.toLocaleString("en-IN", {
-      maximumFractionDigits: 2,
-    })}`;
+    return `₹${Number(value || 0).toLocaleString(
+      "en-IN",
+      {
+        maximumFractionDigits: 2,
+      }
+    )}`;
+  }
+
+  function activityLabel(activity: ActivityItem) {
+    const type = activity.type?.toLowerCase();
+
+    if (type === "expense") {
+      return "Cooperative Expense";
+    }
+
+    if (type === "deposit") {
+      return "Member Deposit";
+    }
+
+    if (type === "withdrawal") {
+      return "Member Withdrawal";
+    }
+
+    return activity.type || "Activity";
+  }
+
+  function activitySource(activity: ActivityItem) {
+    const type = activity.type?.toLowerCase();
+
+    if (type === "expense") {
+      return "Cooperative";
+    }
+
+    if (activity.member_name) {
+      return activity.member_name;
+    }
+
+    return "Cooperative";
   }
 
   const profitPercent =
@@ -302,8 +361,29 @@ export default function AdminDashboard() {
     return (
       <main style={pageStyle}>
         <div style={loadingStyle}>
-          Loading Admin Dashboard...
+          <RefreshCw
+            size={18}
+            style={{
+              animation:
+                "adminSpin 1s linear infinite",
+            }}
+          />
+          <span>
+            Loading Admin Dashboard...
+          </span>
         </div>
+
+        <style jsx global>{`
+          @keyframes adminSpin {
+            from {
+              transform: rotate(0deg);
+            }
+
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}</style>
       </main>
     );
   }
@@ -314,43 +394,46 @@ export default function AdminDashboard() {
 
         {/* HEADER */}
 
-        <header style={headerStyle}>
-          <div>
+        <header className="admin-header">
+          <div style={{ minWidth: 0 }}>
             <p style={eyebrowStyle}>
               TRADEBISHI ADMIN
             </p>
 
-            <h1 style={titleStyle}>
+            <h1 className="admin-title">
               Welcome, {adminName} 👋
             </h1>
 
             <p style={subtitleStyle}>
-              Real-time financial overview of
-              your operation.
+              Complete cooperative financial
+              overview.
             </p>
           </div>
 
-          <div style={headerActions}>
+          <div className="admin-header-actions">
             <button
               type="button"
               onClick={refreshDashboard}
               disabled={refreshing}
-              style={secondaryButton}
+              style={{
+                ...secondaryButton,
+                opacity: refreshing ? 0.6 : 1,
+              }}
             >
               <RefreshCw
                 size={16}
                 style={{
-                  transform: refreshing
-                    ? "rotate(360deg)"
+                  animation: refreshing
+                    ? "adminSpin 1s linear infinite"
                     : "none",
-                  transition:
-                    "transform 0.6s",
                 }}
               />
 
-              {refreshing
-                ? "Refreshing..."
-                : "Refresh"}
+              <span>
+                {refreshing
+                  ? "Refreshing..."
+                  : "Refresh"}
+              </span>
             </button>
 
             <button
@@ -359,7 +442,7 @@ export default function AdminDashboard() {
               style={secondaryButton}
             >
               <LogOut size={16} />
-              Sign Out
+              <span>Sign Out</span>
             </button>
           </div>
         </header>
@@ -372,15 +455,15 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* PRIMARY FINANCIAL CARDS */}
+        {/* MAIN FINANCIAL STATS */}
 
-        <section style={primaryGrid}>
+        <section className="admin-primary-grid">
           <FinancialCard
             title="Approved Capital"
             value={currency(
               stats.approvedCapital
             )}
-            subtitle="Successfully approved deposits"
+            subtitle="Approved member deposits"
             icon={<Wallet size={20} />}
           />
 
@@ -412,18 +495,26 @@ export default function AdminDashboard() {
 
         {/* PERFORMANCE */}
 
-        <section style={performanceCard}>
+        <section
+          className="admin-performance-card"
+          style={performanceCard}
+        >
           <div>
             <p style={cardLabel}>
               PORTFOLIO PERFORMANCE
             </p>
 
-            <h2 style={performanceValue}>
+            <h2
+              className="admin-performance-value"
+              style={performanceValue}
+            >
               {stats.profitLoss >= 0
                 ? "+"
                 : "-"}
               {currency(
-                Math.abs(stats.profitLoss)
+                Math.abs(
+                  stats.profitLoss
+                )
               )}
             </h2>
 
@@ -441,7 +532,10 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <div style={performanceRight}>
+          <div
+            className="admin-performance-right"
+            style={performanceRight}
+          >
             <p style={smallLabel}>
               INVESTED
             </p>
@@ -471,15 +565,7 @@ export default function AdminDashboard() {
 
         {/* SECONDARY STATS */}
 
-        <section style={secondaryGrid}>
-          <InfoCard
-            title="Total Deposits"
-            value={currency(
-              stats.totalDeposits
-            )}
-            icon={<Wallet size={18} />}
-          />
-
+        <section className="admin-secondary-grid">
           <InfoCard
             title="Pending Deposits"
             value={stats.pendingDeposits.toString()}
@@ -490,263 +576,164 @@ export default function AdminDashboard() {
           />
 
           <InfoCard
-            title="Investment P/L"
-            value={
-              (stats.profitLoss >= 0
-                ? "+"
-                : "-") +
-              currency(
-                Math.abs(stats.profitLoss)
-              )
+            title="Pending Withdrawals"
+            value={stats.pendingWithdrawals.toString()}
+            icon={<ArrowDownRight size={18} />}
+            warning={
+              stats.pendingWithdrawals > 0
             }
-            icon={<TrendingUp size={18} />}
-            positive={
-              stats.profitLoss >= 0
-            }
+          />
+
+          <InfoCard
+            title="Cooperative Expenses"
+            value={currency(
+              stats.totalExpenses
+            )}
+            icon={<Receipt size={18} />}
           />
         </section>
 
-        {/* RECENT ACTIVITY */}
+        {/* ACTIVITY */}
 
         <section style={activitySection}>
-          <div style={activityHeader}>
-            <div>
+          <div
+            className="admin-activity-header"
+            style={activityHeader}
+          >
+            <div style={{ minWidth: 0 }}>
               <p style={cardLabel}>
-                LIVE ACTIVITY
+                COOPERATIVE ACTIVITY
               </p>
 
               <h2 style={sectionTitle}>
                 Recent Activity
               </h2>
+
+              <p style={sectionSubtitle}>
+                Deposits, withdrawals,
+                expenses and other
+                cooperative transactions.
+              </p>
             </div>
 
-            <span style={liveIndicator}>
-              <span style={liveDot} />
-              Live Data
-            </span>
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  "/admin/activity"
+                )
+              }
+              style={viewAllButton}
+            >
+              <span>View All</span>
+              <ChevronRight size={15} />
+            </button>
           </div>
 
-          <div style={activityGrid}>
+          {activities.length === 0 ? (
+            <div style={emptyActivity}>
+              <Activity size={28} />
+              <p>
+                No cooperative activity yet.
+              </p>
+            </div>
+          ) : (
+            <div style={activityList}>
+              {activities.map(
+                (activity) => {
+                  const type =
+                    activity.type?.toLowerCase();
 
-            {/* RECENT DEPOSITS */}
+                  const isExpense =
+                    type === "expense";
 
-            <div style={activityPanel}>
-              <div style={panelHeader}>
-                <div>
-                  <h3 style={panelTitle}>
-                    Recent Deposits
-                  </h3>
+                  const isWithdrawal =
+                    type ===
+                    "withdrawal";
 
-                  <p style={panelSubtitle}>
-                    Latest capital requests
-                  </p>
-                </div>
+                  const negative =
+                    isExpense ||
+                    isWithdrawal;
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/deposits"
-                    )
-                  }
-                  style={viewButton}
-                >
-                  View all
-                </button>
-              </div>
-
-              {recentDeposits.length ===
-              0 ? (
-                <div style={emptyActivity}>
-                  No deposits yet.
-                </div>
-              ) : (
-                <div style={activityList}>
-                  {recentDeposits.map(
-                    (deposit) => (
-                      <div
-                        key={deposit.id}
-                        style={activityRow}
-                      >
-                        <div
-                          style={activityIcon}
-                        >
-                          <Wallet size={16} />
-                        </div>
-
-                        <div
-                          style={
-                            activityMain
-                          }
-                        >
-                          <strong>
-                            {
-                              deposit.member_name
-                            }
-                          </strong>
-
-                          <span>
-                            {deposit.method}
-                            {" • "}
-                            {new Date(
-                              deposit.created_at
-                            ).toLocaleDateString(
-                              "en-IN"
-                            )}
-                          </span>
-                        </div>
-
-                        <div
-                          style={
-                            activityAmount
-                          }
-                        >
-                          <strong>
-                            {currency(
-                              Number(
-                                deposit.amount
-                              )
-                            )}
-                          </strong>
-
-                          <span
-                            style={{
-                              color:
-                                deposit.status?.toLowerCase() ===
-                                "approved"
-                                  ? "#34d399"
-                                  : deposit.status?.toLowerCase() ===
-                                    "rejected"
-                                  ? "#f87171"
-                                  : "#facc15",
-                            }}
-                          >
-                            {deposit.status}
-                          </span>
-                        </div>
+                  return (
+                    <div
+                      key={activity.id}
+                      className="admin-activity-row"
+                      style={activityRow}
+                    >
+                      <div style={activityIcon}>
+                        {isExpense ? (
+                          <Receipt size={17} />
+                        ) : isWithdrawal ? (
+                          <ArrowDownRight
+                            size={17}
+                          />
+                        ) : (
+                          <ArrowUpRight
+                            size={17}
+                          />
+                        )}
                       </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
 
-            {/* RECENT INVESTMENTS */}
+                      <div
+                        style={
+                          activityMain
+                        }
+                      >
+                        <strong>
+                          {activityLabel(
+                            activity
+                          )}
+                        </strong>
 
-            <div style={activityPanel}>
-              <div style={panelHeader}>
-                <div>
-                  <h3 style={panelTitle}>
-                    Recent Investments
-                  </h3>
+                        <span>
+                          {activitySource(
+                            activity
+                          )}
+                          {" • "}
+                          {activity.description ||
+                            "No description"}
+                        </span>
 
-                  <p style={panelSubtitle}>
-                    Latest portfolio updates
-                  </p>
-                </div>
+                        <small>
+                          {new Date(
+                            activity.created_at
+                          ).toLocaleString(
+                            "en-IN"
+                          )}
+                        </small>
+                      </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      "/admin/investments"
-                    )
-                  }
-                  style={viewButton}
-                >
-                  View all
-                </button>
-              </div>
-
-              {recentInvestments.length ===
-              0 ? (
-                <div style={emptyActivity}>
-                  No investments yet.
-                </div>
-              ) : (
-                <div style={activityList}>
-                  {recentInvestments.map(
-                    (investment) => {
-                      const positive =
-                        Number(
-                          investment.profit_loss
-                        ) >= 0;
-
-                      return (
-                        <div
-                          key={investment.id}
-                          style={activityRow}
+                      <div
+                        style={
+                          activityAmount
+                        }
+                      >
+                        <strong
+                          style={{
+                            color: negative
+                              ? "#f87171"
+                              : "#34d399",
+                          }}
                         >
-                          <div
-                            style={activityIcon}
-                          >
-                            <TrendingUp
-                              size={16}
-                            />
-                          </div>
+                          {negative
+                            ? "-"
+                            : "+"}
+                          {currency(
+                            activity.amount
+                          )}
+                        </strong>
 
-                          <div
-                            style={
-                              activityMain
-                            }
-                          >
-                            <strong>
-                              {
-                                investment.member_name
-                              }
-                            </strong>
-
-                            <span>
-                              Updated{" "}
-                              {new Date(
-                                investment.updated_at
-                              ).toLocaleDateString(
-                                "en-IN"
-                              )}
-                            </span>
-                          </div>
-
-                          <div
-                            style={
-                              activityAmount
-                            }
-                          >
-                            <strong>
-                              {currency(
-                                Number(
-                                  investment.current_value
-                                )
-                              )}
-                            </strong>
-
-                            <span
-                              style={{
-                                color:
-                                  positive
-                                    ? "#34d399"
-                                    : "#f87171",
-                              }}
-                            >
-                              {positive
-                                ? "+"
-                                : "-"}
-                              {currency(
-                                Math.abs(
-                                  Number(
-                                    investment.profit_loss
-                                  )
-                                )
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    }
-                  )}
-                </div>
+                        <span>
+                          {activity.status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
               )}
             </div>
-          </div>
+          )}
         </section>
 
         {/* ADMIN MANAGEMENT */}
@@ -756,7 +743,7 @@ export default function AdminDashboard() {
             ADMIN MANAGEMENT
           </p>
 
-          <div style={quickGrid}>
+          <div className="admin-quick-grid">
             <button
               type="button"
               onClick={() =>
@@ -787,6 +774,19 @@ export default function AdminDashboard() {
               type="button"
               onClick={() =>
                 router.push(
+                  "/admin/withdrawals"
+                )
+              }
+              style={quickButton}
+            >
+              <ArrowDownRight size={18} />
+              Manage Withdrawals
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
                   "/admin/investments"
                 )
               }
@@ -795,6 +795,19 @@ export default function AdminDashboard() {
               <TrendingUp size={18} />
               Manage Investments
             </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  "/admin/activity"
+                )
+              }
+              style={quickButton}
+            >
+              <Activity size={18} />
+              Cooperative Activity
+            </button>
           </div>
         </section>
 
@@ -802,9 +815,300 @@ export default function AdminDashboard() {
           TradeBishi • Admin Control Center
         </p>
       </div>
+
+      {/* RESPONSIVE CSS */}
+
+      <style jsx global>{`
+        * {
+          box-sizing: border-box;
+        }
+
+        html,
+        body {
+          overflow-x: hidden;
+        }
+
+        button {
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .admin-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 20px;
+          margin-bottom: 32px;
+        }
+
+        .admin-title {
+          margin: 8px 0 0;
+          font-size: 38px;
+          letter-spacing: -1.5px;
+          line-height: 1.12;
+        }
+
+        .admin-header-actions {
+          display: flex;
+          gap: 10px;
+          flex-shrink: 0;
+        }
+
+        .admin-primary-grid {
+          display: grid;
+          grid-template-columns: repeat(
+            4,
+            minmax(0, 1fr)
+          );
+          gap: 16px;
+        }
+
+        .admin-secondary-grid {
+          display: grid;
+          grid-template-columns: repeat(
+            3,
+            minmax(0, 1fr)
+          );
+          gap: 16px;
+          margin-top: 18px;
+        }
+
+        .admin-performance-value {
+          word-break: break-word;
+        }
+
+        .admin-performance-right {
+          flex-shrink: 0;
+        }
+
+        .admin-activity-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 20px;
+          gap: 15px;
+        }
+
+        .admin-activity-row {
+          grid-template-columns: 40px minmax(
+              0,
+              1fr
+            ) auto !important;
+        }
+
+        .admin-quick-grid {
+          display: grid;
+          grid-template-columns: repeat(
+            3,
+            minmax(0, 1fr)
+          );
+          gap: 12px;
+          margin-top: 16px;
+        }
+
+        /* TABLET */
+
+        @media (max-width: 1050px) {
+          .admin-primary-grid {
+            grid-template-columns: repeat(
+              2,
+              minmax(0, 1fr)
+            );
+          }
+
+          .admin-secondary-grid {
+            grid-template-columns: repeat(
+              3,
+              minmax(0, 1fr)
+            );
+          }
+
+          .admin-quick-grid {
+            grid-template-columns: repeat(
+              2,
+              minmax(0, 1fr)
+            );
+          }
+        }
+
+        /* SMALL TABLET / LARGE PHONE */
+
+        @media (max-width: 760px) {
+          .admin-header {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .admin-header-actions {
+            width: 100%;
+          }
+
+          .admin-header-actions button {
+            flex: 1;
+            justify-content: center;
+          }
+
+          .admin-title {
+            font-size: 32px;
+          }
+
+          .admin-primary-grid {
+            grid-template-columns: repeat(
+              2,
+              minmax(0, 1fr)
+            );
+          }
+
+          .admin-secondary-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .admin-performance-card {
+            align-items: flex-start !important;
+            flex-direction: column !important;
+            gap: 25px;
+          }
+
+          .admin-performance-right {
+            width: 100%;
+            text-align: left !important;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            column-gap: 20px;
+          }
+
+          .admin-performance-right p {
+            margin-bottom: 4px !important;
+          }
+
+          .admin-performance-right strong {
+            font-size: 17px;
+          }
+
+          .admin-performance-right p:nth-of-type(2) {
+            margin-top: 0 !important;
+          }
+
+          .admin-quick-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        /* MOBILE */
+
+        @media (max-width: 560px) {
+          .admin-title {
+            font-size: 28px;
+            letter-spacing: -1px;
+          }
+
+          .admin-header-actions {
+            flex-direction: column;
+          }
+
+          .admin-header-actions button {
+            width: 100%;
+          }
+
+          .admin-primary-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .admin-performance-card {
+            padding: 22px !important;
+          }
+
+          .admin-performance-value {
+            font-size: 30px !important;
+          }
+
+          .admin-performance-right {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .admin-activity-header {
+            flex-direction: column;
+          }
+
+          .admin-activity-header button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .admin-activity-row {
+            grid-template-columns: 36px minmax(
+                0,
+                1fr
+              ) !important;
+            position: relative;
+            padding: 13px !important;
+          }
+
+          .admin-activity-row > div:first-child {
+            width: 36px;
+            height: 36px;
+          }
+
+          .admin-activity-row
+            > div:last-child {
+            grid-column: 2;
+            align-items: flex-start !important;
+            margin-top: 5px;
+          }
+
+          .admin-activity-row
+            > div:last-child
+            strong {
+            font-size: 14px;
+          }
+
+          .admin-activity-row
+            > div:nth-child(2)
+            strong {
+            font-size: 13px;
+          }
+
+          .admin-activity-row
+            > div:nth-child(2)
+            span {
+            font-size: 11px;
+            line-height: 1.4;
+          }
+
+          .admin-activity-row
+            > div:nth-child(2)
+            small {
+            font-size: 10px;
+          }
+        }
+
+        /* VERY SMALL PHONES */
+
+        @media (max-width: 380px) {
+          .admin-title {
+            font-size: 25px;
+          }
+
+          .admin-performance-value {
+            font-size: 27px !important;
+          }
+
+          .admin-performance-right {
+            grid-template-columns: 1fr;
+            gap: 4px;
+          }
+
+          .admin-performance-right p:nth-of-type(2) {
+            margin-top: 10px !important;
+          }
+        }
+      `}</style>
     </main>
   );
 }
+
+/* =========================
+   COMPONENTS
+========================= */
 
 function FinancialCard({
   title,
@@ -843,13 +1147,11 @@ function InfoCard({
   value,
   icon,
   warning,
-  positive,
 }: {
   title: string;
   value: string;
   icon: React.ReactNode;
   warning?: boolean;
-  positive?: boolean;
 }) {
   return (
     <div style={infoCard}>
@@ -862,8 +1164,6 @@ function InfoCard({
           style={{
             color: warning
               ? "#facc15"
-              : positive
-              ? "#34d399"
               : "rgba(255,255,255,0.55)",
           }}
         >
@@ -878,8 +1178,6 @@ function InfoCard({
           fontSize: "22px",
           color: warning
             ? "#facc15"
-            : positive
-            ? "#34d399"
             : "white",
         }}
       >
@@ -889,29 +1187,32 @@ function InfoCard({
   );
 }
 
+/* =========================
+   PAGE
+========================= */
+
 const pageStyle = {
   minHeight: "100vh",
-  background: "#050505",
+  width: "100%",
+  background:
+    "radial-gradient(circle at top, #121212 0%, #050505 42%, #030303 100%)",
   color: "white",
   padding: "35px 25px",
 };
 
 const containerStyle = {
+  width: "100%",
   maxWidth: "1350px",
   margin: "0 auto",
 };
 
-const headerStyle = {
+const loadingStyle = {
+  minHeight: "100vh",
   display: "flex",
-  justifyContent: "space-between",
   alignItems: "center",
-  gap: "20px",
-  marginBottom: "32px",
-};
-
-const headerActions = {
-  display: "flex",
+  justifyContent: "center",
   gap: "10px",
+  color: "rgba(255,255,255,0.5)",
 };
 
 const eyebrowStyle = {
@@ -922,22 +1223,10 @@ const eyebrowStyle = {
   fontWeight: 600,
 };
 
-const titleStyle = {
-  margin: "8px 0 0",
-  fontSize: "38px",
-  letterSpacing: "-1.5px",
-};
-
 const subtitleStyle = {
   marginTop: "8px",
   color: "rgba(255,255,255,0.45)",
-};
-
-const primaryGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(4, minmax(0, 1fr))",
-  gap: "16px",
+  fontSize: "14px",
 };
 
 const financialCard = {
@@ -947,7 +1236,8 @@ const financialCard = {
     "linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025))",
   border:
     "1px solid rgba(255,255,255,0.09)",
-  backdropFilter: "blur(20px)",
+  minWidth: 0,
+  overflow: "hidden",
 };
 
 const iconBox = {
@@ -967,19 +1257,22 @@ const cardLabel = {
   color: "rgba(255,255,255,0.42)",
   fontSize: "10px",
   letterSpacing: "1.3px",
-  textTransform: "uppercase" as const,
+  textTransform:
+    "uppercase" as const,
 };
 
 const financialValue = {
   margin: "8px 0 0",
   fontSize: "27px",
-  letterSpacing: "-0.8px",
+  lineHeight: 1.15,
+  overflowWrap: "anywhere" as const,
 };
 
 const cardSubtitle = {
   marginTop: "8px",
   color: "rgba(255,255,255,0.3)",
   fontSize: "12px",
+  lineHeight: 1.4,
 };
 
 const performanceCard = {
@@ -998,7 +1291,7 @@ const performanceCard = {
 const performanceValue = {
   margin: "10px 0 0",
   fontSize: "36px",
-  letterSpacing: "-1px",
+  lineHeight: 1.1,
 };
 
 const returnBadge = {
@@ -1022,14 +1315,6 @@ const smallLabel = {
   marginBottom: "4px",
 };
 
-const secondaryGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(3, minmax(0, 1fr))",
-  gap: "16px",
-  marginTop: "18px",
-};
-
 const infoCard = {
   padding: "22px",
   borderRadius: "20px",
@@ -1037,12 +1322,14 @@ const infoCard = {
     "rgba(255,255,255,0.045)",
   border:
     "1px solid rgba(255,255,255,0.08)",
+  minWidth: 0,
 };
 
 const infoTop = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",
+  gap: "10px",
 };
 
 const activitySection = {
@@ -1053,82 +1340,45 @@ const activitySection = {
     "rgba(255,255,255,0.035)",
   border:
     "1px solid rgba(255,255,255,0.08)",
+  minWidth: 0,
 };
 
 const activityHeader = {
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "center",
+  alignItems: "flex-start",
   marginBottom: "20px",
+  gap: "15px",
 };
 
 const sectionTitle = {
   marginTop: "7px",
+  marginBottom: 0,
   fontSize: "23px",
+  lineHeight: 1.2,
 };
 
-const liveIndicator = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-  padding: "8px 11px",
-  borderRadius: "20px",
-  background:
-    "rgba(52,211,153,0.08)",
-  border:
-    "1px solid rgba(52,211,153,0.15)",
-  color: "#34d399",
-  fontSize: "11px",
-};
-
-const liveDot = {
-  width: "6px",
-  height: "6px",
-  borderRadius: "50%",
-  background: "#34d399",
-};
-
-const activityGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(2, minmax(0, 1fr))",
-  gap: "16px",
-};
-
-const activityPanel = {
-  padding: "20px",
-  borderRadius: "19px",
-  background:
-    "rgba(0,0,0,0.18)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-};
-
-const panelHeader = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "10px",
-  marginBottom: "15px",
-};
-
-const panelTitle = {
-  margin: 0,
-  fontSize: "16px",
-};
-
-const panelSubtitle = {
-  marginTop: "4px",
-  color: "rgba(255,255,255,0.3)",
-  fontSize: "11px",
-};
-
-const viewButton = {
-  border: "none",
-  background: "transparent",
-  color: "rgba(255,255,255,0.55)",
-  cursor: "pointer",
+const sectionSubtitle = {
+  marginTop: "6px",
+  color: "rgba(255,255,255,0.35)",
   fontSize: "12px",
+  lineHeight: 1.5,
+};
+
+const viewAllButton = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "5px",
+  padding: "9px 12px",
+  borderRadius: "11px",
+  border:
+    "1px solid rgba(255,255,255,0.1)",
+  background:
+    "rgba(255,255,255,0.05)",
+  color: "white",
+  cursor: "pointer",
+  flexShrink: 0,
 };
 
 const activityList = {
@@ -1140,24 +1390,28 @@ const activityList = {
 const activityRow = {
   display: "grid",
   gridTemplateColumns:
-    "36px 1fr auto",
+    "40px minmax(0, 1fr) auto",
   alignItems: "center",
-  gap: "11px",
-  padding: "12px",
-  borderRadius: "13px",
+  gap: "12px",
+  padding: "14px",
+  borderRadius: "14px",
   background:
     "rgba(255,255,255,0.035)",
+  border:
+    "1px solid rgba(255,255,255,0.05)",
+  minWidth: 0,
 };
 
 const activityIcon = {
-  width: "36px",
-  height: "36px",
-  borderRadius: "11px",
+  width: "40px",
+  height: "40px",
+  borderRadius: "12px",
+  background:
+    "rgba(255,255,255,0.06)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  background:
-    "rgba(255,255,255,0.06)",
+  flexShrink: 0,
 };
 
 const activityMain = {
@@ -1173,13 +1427,17 @@ const activityAmount = {
   alignItems: "flex-end",
   gap: "4px",
   fontSize: "12px",
+  whiteSpace: "nowrap" as const,
 };
 
 const emptyActivity = {
-  padding: "35px 10px",
-  textAlign: "center" as const,
+  minHeight: "180px",
+  display: "flex",
+  flexDirection: "column" as const,
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "10px",
   color: "rgba(255,255,255,0.3)",
-  fontSize: "13px",
 };
 
 const quickSection = {
@@ -1190,14 +1448,6 @@ const quickSection = {
     "rgba(255,255,255,0.035)",
   border:
     "1px solid rgba(255,255,255,0.07)",
-};
-
-const quickGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(3, minmax(0, 1fr))",
-  gap: "12px",
-  marginTop: "16px",
 };
 
 const quickButton = {
@@ -1214,13 +1464,16 @@ const quickButton = {
   color: "white",
   cursor: "pointer",
   fontWeight: 600,
+  minHeight: "48px",
 };
 
 const secondaryButton = {
   display: "flex",
   alignItems: "center",
+  justifyContent: "center",
   gap: "8px",
   padding: "11px 15px",
+  minHeight: "43px",
   borderRadius: "13px",
   border:
     "1px solid rgba(255,255,255,0.1)",
@@ -1228,6 +1481,7 @@ const secondaryButton = {
     "rgba(255,255,255,0.05)",
   color: "white",
   cursor: "pointer",
+  whiteSpace: "nowrap" as const,
 };
 
 const errorBox = {
@@ -1239,14 +1493,7 @@ const errorBox = {
   border:
     "1px solid rgba(248,113,113,0.2)",
   color: "#f87171",
-};
-
-const loadingStyle = {
-  minHeight: "100vh",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "rgba(255,255,255,0.5)",
+  lineHeight: 1.5,
 };
 
 const footerStyle = {

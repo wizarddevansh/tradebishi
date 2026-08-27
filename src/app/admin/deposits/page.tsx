@@ -154,9 +154,7 @@ export default function AdminDepositsPage() {
 
   async function refreshDeposits() {
     setRefreshing(true);
-
     await loadDeposits();
-
     setRefreshing(false);
   }
 
@@ -225,14 +223,51 @@ export default function AdminDepositsPage() {
           : null,
     };
 
-    const { error: insertError } = await supabase
+    const {
+      data: createdDeposit,
+      error: insertError,
+    } = await supabase
       .from("deposits")
-      .insert(insertData);
+      .insert(insertData)
+      .select(
+        "id, member_id, amount, method, proof_url, status, reviewed_by, reviewed_at, created_at"
+      )
+      .single();
 
     if (insertError) {
       setError(insertError.message);
       setSaving(false);
       return;
+    }
+
+    if (
+      newStatus === "approved" &&
+      createdDeposit
+    ) {
+      const { error: transactionError } =
+        await supabase
+          .from("transactions")
+          .insert({
+            member_id: createdDeposit.member_id,
+            type: "deposit",
+            amount: Number(createdDeposit.amount),
+            description: "Deposit approved",
+            status: "completed",
+          });
+
+      if (transactionError) {
+        await supabase
+          .from("deposits")
+          .delete()
+          .eq("id", createdDeposit.id);
+
+        setError(
+          `Deposit creation failed: ${transactionError.message}`
+        );
+
+        setSaving(false);
+        return;
+      }
     }
 
     setShowAddModal(false);
@@ -249,7 +284,9 @@ export default function AdminDepositsPage() {
     const confirmed = window.confirm(
       `Delete this deposit of ${currency(
         Number(deposit.amount)
-      )} for ${memberName(deposit.member_id)}?\n\nThis cannot be undone.`
+      )} for ${memberName(
+        deposit.member_id
+      )}?\n\nThis cannot be undone.`
     );
 
     if (!confirmed) return;
@@ -266,10 +303,11 @@ export default function AdminDepositsPage() {
       return;
     }
 
-    const { error: deleteError } = await supabase
-      .from("deposits")
-      .delete()
-      .eq("id", deposit.id);
+    const { error: deleteError } =
+      await supabase
+        .from("deposits")
+        .delete()
+        .eq("id", deposit.id);
 
     if (deleteError) {
       setError(deleteError.message);
@@ -302,12 +340,16 @@ export default function AdminDepositsPage() {
       return;
     }
 
-    const { data: deposit, error: depositError } =
-      await supabase
-        .from("deposits")
-        .select("id, status")
-        .eq("id", depositId)
-        .single();
+    const {
+      data: deposit,
+      error: depositError,
+    } = await supabase
+      .from("deposits")
+      .select(
+        "id, member_id, amount, status"
+      )
+      .eq("id", depositId)
+      .single();
 
     if (depositError || !deposit) {
       setError(
@@ -347,6 +389,37 @@ export default function AdminDepositsPage() {
       setError(updateError.message);
       setReviewing(false);
       return;
+    }
+
+    if (newStatus === "approved") {
+      const { error: transactionError } =
+        await supabase
+          .from("transactions")
+          .insert({
+            member_id: deposit.member_id,
+            type: "deposit",
+            amount: Number(deposit.amount),
+            description: "Deposit approved",
+            status: "completed",
+          });
+
+      if (transactionError) {
+        await supabase
+          .from("deposits")
+          .update({
+            status: "pending",
+            reviewed_by: null,
+            reviewed_at: null,
+          })
+          .eq("id", depositId);
+
+        setError(
+          `Deposit approval failed: ${transactionError.message}`
+        );
+
+        setReviewing(false);
+        return;
+      }
     }
 
     setSelectedDeposit(null);
@@ -420,10 +493,8 @@ export default function AdminDepositsPage() {
   return (
     <main style={pageStyle}>
       <div style={containerStyle}>
-        {/* HEADER */}
-
         <header style={headerStyle}>
-          <div>
+          <div style={headerContent}>
             <button
               type="button"
               onClick={() =>
@@ -474,7 +545,6 @@ export default function AdminDepositsPage() {
                     "transform 0.6s",
                 }}
               />
-
               {refreshing
                 ? "Refreshing..."
                 : "Refresh"}
@@ -491,15 +561,11 @@ export default function AdminDepositsPage() {
           </div>
         </header>
 
-        {/* ERROR */}
-
         {error && (
           <div style={errorBox}>
             {error}
           </div>
         )}
-
-        {/* SUMMARY */}
 
         <section style={summaryGrid}>
           <SummaryCard
@@ -526,8 +592,6 @@ export default function AdminDepositsPage() {
             icon={<Wallet size={19} />}
           />
         </section>
-
-        {/* DEPOSITS */}
 
         <section style={sectionStyle}>
           <div style={sectionHeader}>
@@ -567,82 +631,192 @@ export default function AdminDepositsPage() {
               </button>
             </div>
           ) : (
-            <div style={tableWrapper}>
-              <div style={tableHeader}>
-                <span>MEMBER</span>
-                <span>AMOUNT</span>
-                <span>METHOD</span>
-                <span>STATUS</span>
-                <span>DATE</span>
-                <span>ACTIONS</span>
-              </div>
+            <>
+              {/* DESKTOP TABLE */}
+              <div style={desktopTable}>
+                <div style={tableHeader}>
+                  <span>MEMBER</span>
+                  <span>AMOUNT</span>
+                  <span>METHOD</span>
+                  <span>STATUS</span>
+                  <span>DATE</span>
+                  <span>ACTIONS</span>
+                </div>
 
-              {deposits.map((deposit) => {
-                const status =
-                  deposit.status?.toLowerCase();
+                {deposits.map((deposit) => {
+                  const status =
+                    deposit.status?.toLowerCase();
 
-                return (
-                  <div
-                    key={deposit.id}
-                    style={tableRow}
-                  >
-                    <div>
+                  return (
+                    <div
+                      key={deposit.id}
+                      style={tableRow}
+                    >
+                      <div style={memberCell}>
+                        <strong>
+                          {memberName(
+                            deposit.member_id
+                          )}
+                        </strong>
+
+                        <p style={mutedText}>
+                          {deposit.member_id}
+                        </p>
+                      </div>
+
                       <strong>
-                        {memberName(
-                          deposit.member_id
+                        {currency(
+                          Number(deposit.amount)
                         )}
                       </strong>
 
-                      <p style={mutedText}>
-                        {deposit.member_id}
-                      </p>
+                      <span
+                        style={{
+                          textTransform:
+                            "capitalize",
+                          color:
+                            "rgba(255,255,255,0.65)",
+                        }}
+                      >
+                        {deposit.method.replaceAll(
+                          "_",
+                          " "
+                        )}
+                      </span>
+
+                      <StatusBadge
+                        status={status}
+                      />
+
+                      <span style={dateText}>
+                        {new Date(
+                          deposit.created_at
+                        ).toLocaleString(
+                          "en-IN"
+                        )}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedDeposit(
+                            deposit
+                          )
+                        }
+                        style={viewButton}
+                      >
+                        View
+                      </button>
                     </div>
+                  );
+                })}
+              </div>
 
-                    <strong>
-                      {currency(
-                        Number(deposit.amount)
-                      )}
-                    </strong>
+              {/* MOBILE CARDS */}
+              <div style={mobileList}>
+                {deposits.map((deposit) => {
+                  const status =
+                    deposit.status?.toLowerCase();
 
-                    <span
-                      style={{
-                        textTransform:
-                          "capitalize",
-                        color:
-                          "rgba(255,255,255,0.65)",
-                      }}
+                  return (
+                    <div
+                      key={deposit.id}
+                      style={mobileDepositCard}
                     >
-                      {deposit.method
-                        .replaceAll("_", " ")}
-                    </span>
+                      <div style={mobileCardTop}>
+                        <div style={memberCell}>
+                          <strong
+                            style={{
+                              fontSize: "15px",
+                            }}
+                          >
+                            {memberName(
+                              deposit.member_id
+                            )}
+                          </strong>
 
-                    <StatusBadge
-                      status={status}
-                    />
+                          <span
+                            style={mobileDate}
+                          >
+                            {new Date(
+                              deposit.created_at
+                            ).toLocaleDateString(
+                              "en-IN"
+                            )}
+                          </span>
+                        </div>
 
-                    <span style={dateText}>
-                      {new Date(
-                        deposit.created_at
-                      ).toLocaleString(
-                        "en-IN"
-                      )}
-                    </span>
+                        <StatusBadge
+                          status={status}
+                        />
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedDeposit(
-                          deposit
-                        )
-                      }
-                      style={viewButton}
-                    >
-                      View
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                      <div
+                        style={
+                          mobileAmountRow
+                        }
+                      >
+                        <div>
+                          <p
+                            style={mobileLabel}
+                          >
+                            AMOUNT
+                          </p>
+
+                          <strong
+                            style={
+                              mobileAmount
+                            }
+                          >
+                            {currency(
+                              Number(
+                                deposit.amount
+                              )
+                            )}
+                          </strong>
+                        </div>
+
+                        <div
+                          style={
+                            mobileMethod
+                          }
+                        >
+                          <p
+                            style={mobileLabel}
+                          >
+                            METHOD
+                          </p>
+
+                          <span>
+                            {deposit.method.replaceAll(
+                              "_",
+                              " "
+                            )}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedDeposit(
+                            deposit
+                          )
+                        }
+                        style={
+                          mobileViewButton
+                        }
+                      >
+                        View Deposit
+                        <ExternalLink
+                          size={15}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       </div>
@@ -753,19 +927,15 @@ export default function AdminDepositsPage() {
                 <option value="bank_transfer">
                   Bank Transfer
                 </option>
-
                 <option value="upi">
                   UPI
                 </option>
-
                 <option value="cash">
                   Cash
                 </option>
-
                 <option value="cheque">
                   Cheque
                 </option>
-
                 <option value="other">
                   Other
                 </option>
@@ -900,58 +1070,62 @@ export default function AdminDepositsPage() {
               </button>
             </div>
 
-            <DetailRow
-              label="Amount"
-              value={currency(
-                selectedDeposit.amount
-              )}
-            />
+            <div style={detailCard}>
+              <DetailRow
+                label="Amount"
+                value={currency(
+                  selectedDeposit.amount
+                )}
+              />
 
-            <DetailRow
-              label="Payment Method"
-              value={selectedDeposit.method.replaceAll(
-                "_",
-                " "
-              )}
-            />
+              <DetailRow
+                label="Payment Method"
+                value={selectedDeposit.method.replaceAll(
+                  "_",
+                  " "
+                )}
+              />
 
-            <DetailRow
-              label="Status"
-              value={selectedDeposit.status}
-            />
+              <DetailRow
+                label="Status"
+                value={selectedDeposit.status}
+              />
 
-            <DetailRow
-              label="Created"
-              value={new Date(
-                selectedDeposit.created_at
-              ).toLocaleString("en-IN")}
-            />
+              <DetailRow
+                label="Created"
+                value={new Date(
+                  selectedDeposit.created_at
+                ).toLocaleString(
+                  "en-IN"
+                )}
+              />
 
-            <DetailRow
-              label="Reviewed At"
-              value={
-                selectedDeposit.reviewed_at
-                  ? new Date(
-                      selectedDeposit.reviewed_at
-                    ).toLocaleString(
-                      "en-IN"
-                    )
-                  : "Not reviewed"
-              }
-            />
+              <DetailRow
+                label="Reviewed At"
+                value={
+                  selectedDeposit.reviewed_at
+                    ? new Date(
+                        selectedDeposit.reviewed_at
+                      ).toLocaleString(
+                        "en-IN"
+                      )
+                    : "Not reviewed"
+                }
+              />
 
-            <DetailRow
-              label="Reviewed By"
-              value={
-                selectedDeposit.reviewed_by ||
-                "Not reviewed"
-              }
-            />
+              <DetailRow
+                label="Reviewed By"
+                value={
+                  selectedDeposit.reviewed_by ||
+                  "Not reviewed"
+                }
+              />
 
-            <DetailRow
-              label="Deposit ID"
-              value={selectedDeposit.id}
-            />
+              <DetailRow
+                label="Deposit ID"
+                value={selectedDeposit.id}
+              />
+            </div>
 
             {selectedDeposit.proof_url && (
               <a
@@ -966,8 +1140,6 @@ export default function AdminDepositsPage() {
                 View Payment Proof
               </a>
             )}
-
-            {/* DELETE */}
 
             <button
               type="button"
@@ -986,8 +1158,6 @@ export default function AdminDepositsPage() {
                 ? "Deleting..."
                 : "Delete Deposit"}
             </button>
-
-            {/* REVIEW */}
 
             {selectedDeposit.status?.toLowerCase() ===
               "pending" && (
@@ -1012,7 +1182,7 @@ export default function AdminDepositsPage() {
 
                   {reviewing
                     ? "Processing..."
-                    : "Reject Deposit"}
+                    : "Reject"}
                 </button>
 
                 <button
@@ -1035,7 +1205,7 @@ export default function AdminDepositsPage() {
 
                   {reviewing
                     ? "Processing..."
-                    : "Approve Deposit"}
+                    : "Approve"}
                 </button>
               </div>
             )}
@@ -1132,6 +1302,7 @@ function StatusBadge({
         fontSize: "11px",
         fontWeight: 600,
         textTransform: "capitalize",
+        whiteSpace: "nowrap",
       }}
     >
       {status}
@@ -1167,11 +1338,12 @@ const pageStyle = {
   minHeight: "100vh",
   background: "#050505",
   color: "white",
-  padding: "35px 25px",
+  padding: "clamp(18px, 3vw, 35px) clamp(14px, 3vw, 25px)",
 };
 
 const containerStyle = {
-  maxWidth: "1250px",
+  width: "100%",
+  maxWidth: "1350px",
   margin: "0 auto",
 };
 
@@ -1179,22 +1351,29 @@ const headerStyle = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-end",
-  gap: "20px",
+  gap: "24px",
   marginBottom: "30px",
+  flexWrap: "wrap" as const,
+};
+
+const headerContent = {
+  minWidth: 0,
+  flex: "1 1 450px",
 };
 
 const headerButtons = {
   display: "flex",
-  gap: "10px",
+  gap: "9px",
   flexWrap: "wrap" as const,
   justifyContent: "flex-end",
+  flex: "0 1 auto",
 };
 
 const backButton = {
-  display: "flex",
+  display: "inline-flex",
   alignItems: "center",
   gap: "7px",
-  marginBottom: "22px",
+  marginBottom: "20px",
   padding: "8px 12px",
   borderRadius: "10px",
   border:
@@ -1203,6 +1382,7 @@ const backButton = {
     "rgba(255,255,255,0.04)",
   color: "rgba(255,255,255,0.7)",
   cursor: "pointer",
+  fontSize: "13px",
 };
 
 const eyebrowStyle = {
@@ -1215,20 +1395,24 @@ const eyebrowStyle = {
 
 const titleStyle = {
   margin: "8px 0 0",
-  fontSize: "38px",
+  fontSize: "clamp(30px, 4vw, 38px)",
   letterSpacing: "-1.5px",
+  lineHeight: 1.1,
 };
 
 const subtitleStyle = {
-  marginTop: "8px",
+  marginTop: "9px",
   color: "rgba(255,255,255,0.45)",
+  fontSize: "14px",
 };
 
 const secondaryButton = {
   display: "flex",
   alignItems: "center",
+  justifyContent: "center",
   gap: "8px",
-  padding: "11px 15px",
+  minHeight: "42px",
+  padding: "10px 14px",
   borderRadius: "13px",
   border:
     "1px solid rgba(255,255,255,0.1)",
@@ -1236,19 +1420,25 @@ const secondaryButton = {
     "rgba(255,255,255,0.05)",
   color: "white",
   cursor: "pointer",
+  fontSize: "13px",
+  fontWeight: 500,
 };
 
 const addButton = {
   display: "flex",
   alignItems: "center",
+  justifyContent: "center",
   gap: "8px",
-  padding: "11px 15px",
-  borderRadius: "13px",
-  border: "1px solid rgba(255,255,255,0.16)",
+  minHeight: "42px",
+  padding: "10px 15px",
+  border:
+    "1px solid rgba(255,255,255,0.16)",
   background: "white",
   color: "black",
+  borderRadius: "13px",
   cursor: "pointer",
   fontWeight: 700,
+  fontSize: "13px",
 };
 
 const errorBox = {
@@ -1260,18 +1450,20 @@ const errorBox = {
   border:
     "1px solid rgba(248,113,113,0.2)",
   color: "#f87171",
+  fontSize: "13px",
 };
 
 const summaryGrid = {
   display: "grid",
   gridTemplateColumns:
     "repeat(4, minmax(0, 1fr))",
-  gap: "16px",
-  marginBottom: "20px",
+  gap: "14px",
+  marginBottom: "18px",
 };
 
 const summaryCard = {
-  padding: "22px",
+  minWidth: 0,
+  padding: "20px",
   borderRadius: "20px",
   background:
     "linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025))",
@@ -1288,24 +1480,26 @@ const summaryIcon = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  marginBottom: "18px",
+  marginBottom: "17px",
 };
 
 const cardLabel = {
   margin: 0,
   color: "rgba(255,255,255,0.4)",
-  fontSize: "11px",
+  fontSize: "10px",
   letterSpacing: "1.2px",
   textTransform: "uppercase" as const,
 };
 
 const summaryValue = {
   margin: "8px 0 0",
-  fontSize: "25px",
+  fontSize: "clamp(21px, 2.5vw, 25px)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
 };
 
 const sectionStyle = {
-  padding: "25px",
+  padding: "clamp(17px, 3vw, 25px)",
   borderRadius: "24px",
   background:
     "rgba(255,255,255,0.04)",
@@ -1316,8 +1510,10 @@ const sectionStyle = {
 const sectionHeader = {
   display: "flex",
   justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: "22px",
+  alignItems: "flex-start",
+  gap: "15px",
+  marginBottom: "20px",
+  flexWrap: "wrap" as const,
 };
 
 const sectionTitle = {
@@ -1329,28 +1525,27 @@ const sectionSubtitle = {
   margin: "6px 0 0",
   color: "rgba(255,255,255,0.35)",
   fontSize: "12px",
+  lineHeight: 1.5,
 };
 
 const recordCount = {
-  color:
-    "rgba(255,255,255,0.35)",
+  color: "rgba(255,255,255,0.35)",
   fontSize: "12px",
+  paddingTop: "5px",
 };
 
-const tableWrapper = {
-  display: "flex",
-  flexDirection: "column" as const,
-  gap: "8px",
+const desktopTable = {
+  width: "100%",
   overflowX: "auto" as const,
 };
 
 const tableHeader = {
-  minWidth: "950px",
+  minWidth: "850px",
   display: "grid",
   gridTemplateColumns:
     "1.5fr 1fr 1fr 1fr 1.4fr 0.8fr",
-  gap: "15px",
-  padding: "10px 15px",
+  gap: "14px",
+  padding: "10px 14px",
   color:
     "rgba(255,255,255,0.3)",
   fontSize: "10px",
@@ -1358,18 +1553,25 @@ const tableHeader = {
 };
 
 const tableRow = {
-  minWidth: "950px",
+  minWidth: "850px",
   display: "grid",
   gridTemplateColumns:
     "1.5fr 1fr 1fr 1fr 1.4fr 0.8fr",
-  gap: "15px",
+  gap: "14px",
   alignItems: "center",
-  padding: "16px 15px",
+  padding: "15px 14px",
+  marginBottom: "7px",
   borderRadius: "15px",
   background:
     "rgba(0,0,0,0.22)",
   border:
     "1px solid rgba(255,255,255,0.06)",
+};
+
+const memberCell = {
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column" as const,
 };
 
 const mutedText = {
@@ -1379,6 +1581,7 @@ const mutedText = {
   fontSize: "10px",
   overflow: "hidden",
   textOverflow: "ellipsis",
+  whiteSpace: "nowrap" as const,
 };
 
 const dateText = {
@@ -1399,6 +1602,85 @@ const viewButton = {
   fontWeight: 600,
 };
 
+const mobileList = {
+  display: "none",
+};
+
+const mobileDepositCard = {
+  padding: "17px",
+  borderRadius: "17px",
+  background:
+    "rgba(0,0,0,0.22)",
+  border:
+    "1px solid rgba(255,255,255,0.07)",
+};
+
+const mobileCardTop = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: "12px",
+};
+
+const mobileDate = {
+  marginTop: "5px",
+  color:
+    "rgba(255,255,255,0.32)",
+  fontSize: "11px",
+};
+
+const mobileAmountRow = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-end",
+  gap: "20px",
+  marginTop: "20px",
+  paddingTop: "15px",
+  borderTop:
+    "1px solid rgba(255,255,255,0.06)",
+};
+
+const mobileLabel = {
+  margin: 0,
+  color:
+    "rgba(255,255,255,0.3)",
+  fontSize: "9px",
+  letterSpacing: "1px",
+};
+
+const mobileAmount = {
+  display: "block",
+  marginTop: "5px",
+  fontSize: "21px",
+};
+
+const mobileMethod = {
+  textAlign: "right" as const,
+  color:
+    "rgba(255,255,255,0.65)",
+  fontSize: "13px",
+  textTransform:
+    "capitalize" as const,
+};
+
+const mobileViewButton = {
+  width: "100%",
+  marginTop: "17px",
+  padding: "12px",
+  borderRadius: "12px",
+  border:
+    "1px solid rgba(255,255,255,0.1)",
+  background:
+    "rgba(255,255,255,0.05)",
+  color: "white",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "7px",
+  cursor: "pointer",
+  fontWeight: 600,
+};
+
 const emptyState = {
   minHeight: "220px",
   display: "flex",
@@ -1408,6 +1690,7 @@ const emptyState = {
   gap: "12px",
   color:
     "rgba(255,255,255,0.35)",
+  textAlign: "center" as const,
 };
 
 const loadingStyle = {
@@ -1426,7 +1709,7 @@ const modalOverlay = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  padding: "20px",
+  padding: "14px",
   background:
     "rgba(0,0,0,0.78)",
   backdropFilter: "blur(14px)",
@@ -1435,9 +1718,9 @@ const modalOverlay = {
 const modal = {
   width: "100%",
   maxWidth: "560px",
-  maxHeight: "90vh",
+  maxHeight: "calc(100vh - 28px)",
   overflowY: "auto" as const,
-  padding: "28px",
+  padding: "clamp(19px, 4vw, 28px)",
   borderRadius: "25px",
   background: "#111",
   border:
@@ -1450,22 +1733,25 @@ const modalHeader = {
   display: "flex",
   justifyContent: "space-between",
   alignItems: "flex-start",
-  gap: "20px",
-  marginBottom: "25px",
+  gap: "15px",
+  marginBottom: "23px",
 };
 
 const modalTitle = {
   marginTop: "8px",
   fontSize: "25px",
+  lineHeight: 1.15,
 };
 
 const modalSubtitle = {
   marginTop: "6px",
   color: "rgba(255,255,255,0.4)",
   fontSize: "13px",
+  lineHeight: 1.5,
 };
 
 const closeButton = {
+  flexShrink: 0,
   width: "36px",
   height: "36px",
   borderRadius: "50%",
@@ -1484,7 +1770,7 @@ const formGroup = {
   display: "flex",
   flexDirection: "column" as const,
   gap: "8px",
-  marginBottom: "16px",
+  marginBottom: "15px",
 };
 
 const formLabel = {
@@ -1501,8 +1787,9 @@ const optionalText = {
 
 const formInput = {
   width: "100%",
+  minHeight: "46px",
   boxSizing: "border-box" as const,
-  padding: "13px 14px",
+  padding: "12px 13px",
   borderRadius: "12px",
   border:
     "1px solid rgba(255,255,255,0.1)",
@@ -1517,7 +1804,7 @@ const formHint = {
   display: "flex",
   alignItems: "flex-start",
   gap: "9px",
-  marginTop: "18px",
+  marginTop: "17px",
   padding: "12px",
   borderRadius: "12px",
   background:
@@ -1533,7 +1820,7 @@ const formHint = {
 const modalActions = {
   display: "flex",
   gap: "10px",
-  marginTop: "22px",
+  marginTop: "20px",
 };
 
 const cancelButton = {
@@ -1545,6 +1832,15 @@ const cancelButton = {
     "rgba(255,255,255,0.05)",
   color: "white",
   cursor: "pointer",
+};
+
+const detailCard = {
+  borderRadius: "15px",
+  padding: "0 14px",
+  background:
+    "rgba(255,255,255,0.025)",
+  border:
+    "1px solid rgba(255,255,255,0.06)",
 };
 
 const proofButton = {
@@ -1566,7 +1862,7 @@ const proofButton = {
 };
 
 const deleteButton = {
-  marginTop: "18px",
+  marginTop: "12px",
   width: "100%",
   display: "flex",
   alignItems: "center",
@@ -1637,6 +1933,7 @@ const reviewedNotice = {
   color:
     "rgba(255,255,255,0.45)",
   fontSize: "12px",
+  lineHeight: 1.4,
 };
 
 const detailRow = {
@@ -1644,7 +1941,7 @@ const detailRow = {
   justifyContent: "space-between",
   alignItems: "flex-start",
   gap: "20px",
-  padding: "14px 0",
+  padding: "13px 0",
   borderBottom:
     "1px solid rgba(255,255,255,0.06)",
 };
@@ -1653,7 +1950,7 @@ const detailLabel = {
   color:
     "rgba(255,255,255,0.35)",
   fontSize: "12px",
-  minWidth: "100px",
+  minWidth: "90px",
 };
 
 const detailValue = {
@@ -1661,5 +1958,97 @@ const detailValue = {
     "rgba(255,255,255,0.85)",
   fontSize: "13px",
   textAlign: "right" as const,
-  wordBreak: "break-all" as const,
+  wordBreak: "break-word" as const,
 };
+
+/* =========================
+   RESPONSIVE CSS
+========================= */
+
+if (typeof document !== "undefined") {
+  const styleId =
+    "tradebishi-admin-deposits-responsive";
+
+  if (!document.getElementById(styleId)) {
+    const style =
+      document.createElement("style");
+
+    style.id = styleId;
+
+    style.textContent = `
+      @media (max-width: 1050px) {
+        .tradebishi-deposits-summary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .tradebishi-deposits-summary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          gap: 10px !important;
+        }
+
+        .tradebishi-deposits-desktop {
+          display: none !important;
+        }
+
+        .tradebishi-deposits-mobile {
+          display: flex !important;
+          flex-direction: column;
+          gap: 9px;
+        }
+
+        .tradebishi-deposits-header-buttons {
+          width: 100%;
+          justify-content: stretch !important;
+        }
+
+        .tradebishi-deposits-header-buttons button {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .tradebishi-deposits-modal-actions {
+          flex-direction: column-reverse !important;
+        }
+
+        .tradebishi-deposits-modal-actions button {
+          width: 100%;
+        }
+
+        .tradebishi-deposits-action-grid {
+          grid-template-columns: 1fr !important;
+        }
+      }
+
+      @media (max-width: 430px) {
+        .tradebishi-deposits-summary-grid {
+          grid-template-columns: 1fr 1fr !important;
+        }
+
+        .tradebishi-deposits-summary-card {
+          padding: 16px !important;
+        }
+
+        .tradebishi-deposits-summary-icon {
+          margin-bottom: 13px !important;
+        }
+
+        .tradebishi-deposits-header-buttons {
+          display: grid !important;
+          grid-template-columns: 1fr 1fr !important;
+        }
+
+        .tradebishi-deposits-header-buttons button:first-child {
+          grid-column: 1 / -1;
+        }
+
+        .tradebishi-deposits-mobile-amount-row {
+          gap: 10px !important;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+}
