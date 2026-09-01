@@ -944,7 +944,7 @@ export default function AdminMembersPage() {
             />
 
             <DetailRow
-              label="Investment"
+              label="balance"
               value={currency(
                 selectedMember.investment_amount
               )}
