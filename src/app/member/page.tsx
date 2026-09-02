@@ -3,36 +3,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  TrendingUp,
-  LogOut,
-  Lock,
-  Wallet,
-  BarChart3,
   Activity,
-  ArrowUpRight,
   ArrowDownRight,
-  Plus,
-  X,
-  Clock,
+  ArrowUpRight,
+  BarChart3,
   CheckCircle2,
-  XCircle,
-  Image as ImageIcon,
-  ChevronLeft,
   ChevronRight,
+  CircleDollarSign,
+  Clock,
+  Image as ImageIcon,
+  Lock,
+  LogOut,
+  MinusCircle,
+  Plus,
+  TrendingUp,
+  Users,
+  Wallet,
+  X,
+  XCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
-type Trade = {
-  id: string;
-  symbol: string;
-  trade_type: string;
-  quantity: number;
-  price: number;
-  total_amount: number;
-  trade_date: string;
-  notes: string | null;
-  proofPhotos: string[];
-};
+/* =========================================================
+   TYPES
+========================================================= */
 
 type Member = {
   id: string;
@@ -41,6 +35,11 @@ type Member = {
   investment_amount: number;
   profit_share: number;
   status: string;
+};
+
+type AllMember = {
+  id: string;
+  full_name: string;
 };
 
 type Withdrawal = {
@@ -55,437 +54,179 @@ type Withdrawal = {
   created_at: string;
 };
 
-type PerformancePoint = {
-  date: string;
-  label: string;
-  value: number;
+type Transaction = {
+  id: string;
+  member_id: string | null;
+  type: string;
+  amount: number;
+  description: string | null;
+  status: string;
+  created_at: string;
 };
 
+type Trade = {
+  id: string;
+  trade_name: string;
+  invested_amount: number;
+  approx_return: number;
+  status: "ongoing" | "successful" | "failed";
+  trade_date: string;
+  notes: string | null;
+  trader_id: string | null;
+};
+
+type TradeMember = {
+  id: string;
+  trade_id: string;
+  member_id: string;
+  invested_amount: number;
+  created_at: string;
+};
+
+type TradeFile = {
+  id: string;
+  trade_id: string;
+  category: string;
+  file_url: string;
+  created_at: string;
+};
+
+type TradeLog = {
+  id: string;
+  trade_id: string;
+  description: string;
+  created_at: string;
+};
+
+type Profile = {
+  id: string;
+  full_name: string | null;
+  role: string | null;
+};
+
+type Section =
+  | "overview"
+  | "members"
+  | "cooperative"
+  | "trades"
+  | "withdrawals"
+  | "account";
+
 /* =========================================================
-   MOBILE POLISH CSS
+   HELPERS
 ========================================================= */
 
-const mobileStyles = `
-  * {
-    box-sizing: border-box;
+const supabase = createClient();
+
+function formatCurrency(value: number | null | undefined) {
+  const amount = Number(value ?? 0);
+
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
   }
 
-  html {
-    -webkit-text-size-adjust: 100%;
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
   }
 
-  body {
-    margin: 0;
-    background: #050505;
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getTradeStatusLabel(status: string) {
+  if (status === "successful") {
+    return "Successful";
   }
 
-  button,
-  input,
-  select,
-  textarea {
-    font: inherit;
+  if (status === "failed") {
+    return "Failed — Invested Amount Returned";
   }
 
-  button {
-    -webkit-tap-highlight-color: transparent;
+  return "Ongoing";
+}
+
+function getTradeStatusClass(status: string) {
+  if (status === "successful") {
+    return "tb-status-success";
   }
 
-  .tb-mobile-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 20px;
+  if (status === "failed") {
+    return "tb-status-failed";
   }
 
-  .tb-mobile-stats {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 15px;
+  return "tb-status-ongoing";
+}
+
+function getActivityLabel(type: string) {
+  if (type === "deposit") {
+    return "Deposit";
   }
 
-  .tb-mobile-performance-summary {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+  if (type === "withdrawal") {
+    return "Withdrawal";
   }
 
-  .tb-mobile-account-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
+  if (type === "expense") {
+    return "Others";
   }
 
-  .tb-mobile-withdrawal {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 20px;
+  return type
+    ? type.charAt(0).toUpperCase() + type.slice(1)
+    : "Activity";
+}
+
+function getFileCategoryLabel(category: string) {
+  if (category === "agreement") {
+    return "Agreement";
   }
 
-  .tb-mobile-summary {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 15px;
+  if (category === "receipt") {
+    return "Payment Receipt";
   }
 
-  .tb-mobile-portfolio-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 20px;
-  }
-
-  .tb-mobile-current-value {
-    text-align: right;
-  }
-
-  .tb-mobile-trades {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-  }
-
-  .tb-mobile-trade-inner {
-    min-width: 1050px;
-  }
-
-  .tb-mobile-modal {
-    width: 100%;
-    max-width: 540px;
-  }
-
-  .tb-mobile-proof-image {
-    max-width: calc(100vw - 180px);
-    max-height: calc(100vh - 220px);
-  }
-
-  .tb-mobile-scroll-hint {
-    display: none;
-  }
-
-  @media (max-width: 900px) {
-    .tb-mobile-stats {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .tb-mobile-account-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .tb-mobile-summary {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-
-  @media (max-width: 700px) {
-    .tb-mobile-page {
-      padding: 16px !important;
-    }
-
-    .tb-mobile-container {
-      width: 100%;
-    }
-
-    .tb-mobile-header {
-      flex-direction: column;
-      gap: 16px;
-      margin-bottom: 24px !important;
-    }
-
-    .tb-mobile-header h1 {
-      font-size: 30px !important;
-      line-height: 1.1;
-      letter-spacing: -1.2px !important;
-    }
-
-    .tb-mobile-header p {
-      font-size: 13px !important;
-      line-height: 1.5;
-    }
-
-    .tb-mobile-header > button {
-      width: 100%;
-      justify-content: center;
-      min-height: 44px;
-    }
-
-    .tb-mobile-stats {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 10px !important;
-    }
-
-    .tb-mobile-stat-card {
-      padding: 16px !important;
-      border-radius: 17px !important;
-      min-width: 0;
-    }
-
-    .tb-mobile-stat-card h2 {
-      font-size: 20px !important;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .tb-mobile-stat-label {
-      font-size: 10px !important;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .tb-mobile-portfolio {
-      padding: 18px !important;
-      border-radius: 21px !important;
-    }
-
-    .tb-mobile-portfolio-header {
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .tb-mobile-current-value {
-      text-align: left;
-    }
-
-    .tb-mobile-current-value strong {
-      font-size: 22px !important;
-    }
-
-    .tb-mobile-performance-summary {
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-
-    .tb-mobile-performance-summary > div:last-child {
-      grid-column: 1 / -1;
-    }
-
-    .tb-mobile-chart svg {
-      height: 210px !important;
-    }
-
-    .tb-mobile-section {
-      padding: 18px !important;
-      border-radius: 21px !important;
-    }
-
-    .tb-mobile-section-header {
-      align-items: flex-start !important;
-      margin-bottom: 18px !important;
-    }
-
-    .tb-mobile-section-header h2 {
-      font-size: 20px !important;
-    }
-
-    .tb-mobile-section-header p {
-      font-size: 12px !important;
-      line-height: 1.5;
-    }
-
-    .tb-mobile-withdrawal {
-      flex-direction: column;
-      align-items: stretch;
-      padding: 18px !important;
-      border-radius: 20px !important;
-      gap: 15px;
-    }
-
-    .tb-mobile-withdrawal-button {
-      width: 100%;
-      justify-content: center;
-      min-height: 46px;
-    }
-
-    .tb-mobile-withdrawal-row {
-      padding: 14px !important;
-      gap: 12px !important;
-    }
-
-    .tb-mobile-withdrawal-row strong {
-      font-size: 15px !important;
-    }
-
-    .tb-mobile-withdrawal-row > div:last-child {
-      max-width: 48%;
-    }
-
-    .tb-mobile-summary {
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    .tb-mobile-summary > div:last-child {
-      grid-column: 1 / -1;
-    }
-
-    .tb-mobile-summary-card {
-      padding: 16px !important;
-    }
-
-    .tb-mobile-summary-card strong {
-      font-size: 18px !important;
-    }
-
-    .tb-mobile-account-grid {
-      grid-template-columns: 1fr 1fr;
-      gap: 9px;
-    }
-
-    .tb-mobile-account-item {
-      padding: 13px !important;
-      min-width: 0;
-    }
-
-    .tb-mobile-account-item strong {
-      font-size: 13px !important;
-      overflow-wrap: anywhere;
-    }
-
-    .tb-mobile-trades {
-      margin: 0 -18px;
-      padding: 0 18px;
-    }
-
-    .tb-mobile-trade-inner {
-      min-width: 980px;
-    }
-
-    .tb-mobile-scroll-hint {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: -8px;
-      margin-bottom: 12px;
-      color: rgba(255,255,255,0.25);
-      font-size: 10px;
-    }
-
-    .tb-mobile-security {
-      padding: 13px !important;
-      align-items: flex-start !important;
-      font-size: 11px !important;
-      line-height: 1.5;
-    }
-
-    .tb-mobile-modal-overlay {
-      align-items: flex-end !important;
-      padding: 0 !important;
-    }
-
-    .tb-mobile-modal {
-      max-width: none !important;
-      max-height: 92vh !important;
-      padding: 20px !important;
-      border-radius: 25px 25px 0 0 !important;
-      border-bottom: none !important;
-    }
-
-    .tb-mobile-modal-title {
-      font-size: 22px !important;
-    }
-
-    .tb-mobile-modal-actions {
-      position: sticky;
-      bottom: 0;
-      padding-top: 10px;
-      background: #111;
-    }
-
-    .tb-mobile-proof-top {
-      padding: 16px !important;
-    }
-
-    .tb-mobile-proof-area {
-      gap: 8px !important;
-      padding: 12px !important;
-    }
-
-    .tb-mobile-proof-image {
-      max-width: calc(100vw - 90px) !important;
-      max-height: calc(100vh - 190px) !important;
-      border-radius: 12px !important;
-    }
-
-    .tb-mobile-proof-nav {
-      width: 42px !important;
-      height: 42px !important;
-    }
-
-    .tb-mobile-proof-bottom {
-      padding: 12px 16px !important;
-      flex-direction: column;
-      align-items: stretch !important;
-      gap: 10px !important;
-    }
-
-    .tb-mobile-proof-thumbnails {
-      max-width: 100%;
-      overflow-x: auto;
-    }
-  }
-
-  @media (max-width: 390px) {
-    .tb-mobile-page {
-      padding: 12px !important;
-    }
-
-    .tb-mobile-stats {
-      gap: 8px;
-    }
-
-    .tb-mobile-stat-card {
-      padding: 14px !important;
-    }
-
-    .tb-mobile-stat-card h2 {
-      font-size: 18px !important;
-    }
-
-    .tb-mobile-account-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .tb-mobile-summary {
-      grid-template-columns: 1fr;
-    }
-
-    .tb-mobile-summary > div:last-child {
-      grid-column: auto;
-    }
-
-    .tb-mobile-performance-summary {
-      grid-template-columns: 1fr;
-    }
-
-    .tb-mobile-performance-summary > div:last-child {
-      grid-column: auto;
-    }
-
-    .tb-mobile-header h1 {
-      font-size: 27px !important;
-    }
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    .tb-mobile-stat-card,
-    .tb-mobile-summary-card,
-    .tb-mobile-section,
-    .tb-mobile-withdrawal {
-      transition:
-        transform 180ms ease,
-        border-color 180ms ease,
-        background 180ms ease;
-    }
-
-    .tb-mobile-stat-card:active,
-    .tb-mobile-summary-card:active {
-      transform: scale(0.985);
-    }
-  }
-`;
+  return "Other";
+}
+
+function isImageFile(url: string) {
+  const cleanUrl = url.split("?")[0].toLowerCase();
+
+  return (
+    cleanUrl.endsWith(".jpg") ||
+    cleanUrl.endsWith(".jpeg") ||
+    cleanUrl.endsWith(".png") ||
+    cleanUrl.endsWith(".webp") ||
+    cleanUrl.endsWith(".gif")
+  );
+}
 
 /* =========================================================
    MAIN COMPONENT
@@ -494,19 +235,53 @@ const mobileStyles = `
 export default function MemberDashboard() {
   const router = useRouter();
 
+  /* =========================================================
+     AUTH / MEMBER
+  ========================================================= */
+
   const [loading, setLoading] = useState(true);
-  const [userName, setUserName] = useState("Member");
+  const [member, setMember] = useState<Member | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
-  const [member, setMember] =
-    useState<Member | null>(null);
+  /* =========================================================
+     NAVIGATION
+  ========================================================= */
 
-  const [trades, setTrades] =
-    useState<Trade[]>([]);
+  const [activeSection, setActiveSection] =
+    useState<Section>("overview");
+
+  const [mobileMenuOpen, setMobileMenuOpen] =
+    useState(false);
+
+  /* =========================================================
+     MEMBERS
+  ========================================================= */
+
+  const [allMembers, setAllMembers] =
+    useState<AllMember[]>([]);
+
+  const [membersLoading, setMembersLoading] =
+    useState(false);
+
+  /* =========================================================
+     TRANSACTIONS
+  ========================================================= */
+
+  const [transactions, setTransactions] =
+    useState<Transaction[]>([]);
+
+  const [transactionsLoading, setTransactionsLoading] =
+    useState(false);
+
+  /* =========================================================
+     WITHDRAWALS
+  ========================================================= */
 
   const [withdrawals, setWithdrawals] =
     useState<Withdrawal[]>([]);
 
-  const [error, setError] = useState("");
+  const [withdrawalsLoading, setWithdrawalsLoading] =
+    useState(false);
 
   const [showWithdrawalModal, setShowWithdrawalModal] =
     useState(false);
@@ -515,247 +290,303 @@ export default function MemberDashboard() {
     useState("");
 
   const [withdrawalMethod, setWithdrawalMethod] =
-    useState("upi");
+    useState("Bank Transfer");
 
   const [accountDetails, setAccountDetails] =
     useState("");
 
-  const [submittingWithdrawal, setSubmittingWithdrawal] =
+  const [withdrawalSubmitting, setWithdrawalSubmitting] =
     useState(false);
 
-  /*
-   * TRADE PROOF VIEWER
-   */
+  const [withdrawalMessage, setWithdrawalMessage] =
+    useState("");
 
-  const [showProofModal, setShowProofModal] =
+  /* =========================================================
+     TRADES
+  ========================================================= */
+
+  const [trades, setTrades] =
+    useState<Trade[]>([]);
+
+  const [tradeMembers, setTradeMembers] =
+    useState<TradeMember[]>([]);
+
+  const [tradeFiles, setTradeFiles] =
+    useState<TradeFile[]>([]);
+
+  const [tradeLogs, setTradeLogs] =
+    useState<TradeLog[]>([]);
+
+  const [tradesLoading, setTradesLoading] =
     useState(false);
 
   const [selectedTrade, setSelectedTrade] =
     useState<Trade | null>(null);
 
-  const [selectedProofIndex, setSelectedProofIndex] =
-    useState(0);
+  const [showTradeModal, setShowTradeModal] =
+    useState(false);
+
+  /* =========================================================
+     IMAGE VIEWER
+  ========================================================= */
+
+  const [selectedImage, setSelectedImage] =
+    useState<string | null>(null);
+
+  /* =========================================================
+     ERROR
+  ========================================================= */
+
+  const [pageError, setPageError] =
+    useState("");
+
+  /* =========================================================
+     LOAD MEMBER
+  ========================================================= */
 
   useEffect(() => {
-    loadMember();
-  }, []);
+    let mounted = true;
 
-  async function loadTradeProofs(
-    tradeList: any[]
-  ): Promise<Trade[]> {
-    const supabase = createClient();
+    async function loadMember() {
+      setLoading(true);
+      setPageError("");
 
-    const tradesWithProofs =
-      await Promise.all(
-        tradeList.map(async (trade) => {
-          try {
-            const {
-              data: files,
-              error: storageError,
-            } = await supabase.storage
-              .from("trade-photos")
-              .list(trade.id);
+      try {
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
 
-            if (storageError) {
-              console.error(
-                `Proof loading error for trade ${trade.id}:`,
-                storageError
-              );
+        if (authError) {
+          console.error(
+            "Auth user error:",
+            authError
+          );
+        }
 
-              return {
-                ...trade,
-                proofPhotos: [],
-              };
-            }
-
-            const proofPhotos =
-              (files ?? [])
-                .filter(
-                  (file) =>
-                    file.name &&
-                    !file.name.endsWith("/")
-                )
-                .map((file) => {
-                  const { data } =
-                    supabase.storage
-                      .from("trade-photos")
-                      .getPublicUrl(
-                        `${trade.id}/${file.name}`
-                      );
-
-                  return data.publicUrl;
-                });
-
-            return {
-              ...trade,
-              proofPhotos,
-            };
-          } catch (error) {
-            console.error(
-              `Unexpected proof loading error for trade ${trade.id}:`,
-              error
-            );
-
-            return {
-              ...trade,
-              proofPhotos: [],
-            };
+        if (!user) {
+          if (mounted) {
+            router.replace("/login");
           }
-        })
-      );
 
-    return tradesWithProofs as Trade[];
-  }
-
-  async function loadMember() {
-    const supabase = createClient();
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        router.replace("/login");
-        return;
-      }
-
-      const {
-        data: profile,
-        error: profileError,
-      } = await supabase
-        .from("profiles")
-        .select("id, full_name, role")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (profileError) {
-        console.error(
-          "Profile lookup error:",
-          profileError
-        );
-      }
-
-      if (profile) {
-        if (profile.role !== "member") {
-          router.replace("/");
           return;
         }
 
-        setUserName(
-          profile.full_name ||
-            user.email ||
-            "Member"
-        );
-      }
+        const {
+          data: memberData,
+          error: memberError,
+        } = await supabase
+          .from("members")
+          .select(
+            "id, full_name, phone, investment_amount, profit_share, status"
+          )
+          .eq("user_id", user.id)
+          .maybeSingle();
 
+        if (memberError) {
+          console.error(
+            "Member loading error:",
+            memberError
+          );
+
+          if (mounted) {
+            setPageError(
+              "Unable to load your member account."
+            );
+          }
+
+          return;
+        }
+
+        if (!memberData) {
+          if (mounted) {
+            setPageError(
+              "Your member account could not be found."
+            );
+          }
+
+          return;
+        }
+
+        if (
+          memberData.status &&
+          memberData.status !== "active"
+        ) {
+          if (mounted) {
+            setPageError(
+              "Your member account is not active."
+            );
+          }
+
+          return;
+        }
+
+        if (!mounted) return;
+
+        setMember(memberData as Member);
+
+        const {
+          data: profileData,
+          error: profileError,
+        } = await supabase
+          .from("profiles")
+          .select("id, full_name, role")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError) {
+          console.error(
+            "Profile loading error:",
+            profileError
+          );
+        }
+
+        if (mounted && profileData) {
+          setProfile(profileData as Profile);
+        }
+
+        await Promise.all([
+          loadAllMembers(),
+          loadTransactions(),
+          loadWithdrawalsForMember(
+            memberData.id
+          ),
+          loadTrades(memberData.id),
+        ]);
+      } catch (error) {
+        console.error(
+          "Member dashboard error:",
+          error
+        );
+
+        if (mounted) {
+          setPageError(
+            "Something went wrong while loading your dashboard."
+          );
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadMember();
+
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
+
+  /* =========================================================
+     LOAD MEMBERS
+  ========================================================= */
+
+  async function loadAllMembers() {
+    setMembersLoading(true);
+
+    try {
       const {
-        data: memberData,
-        error: memberError,
+        data,
+        error,
       } = await supabase
         .from("members")
-        .select(
-          "id, full_name, phone, investment_amount, profit_share, status"
-        )
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (memberError) {
-        console.error(
-          "Member lookup error:",
-          memberError
-        );
-
-        setError(
-          "Unable to load your member account."
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      if (!memberData) {
-        setError(
-          "Your member account could not be found. Please contact the administrator."
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      if (!profile) {
-        setUserName(
-          memberData.full_name ||
-            user.email ||
-            "Member"
-        );
-      }
-
-      if (memberData.status !== "active") {
-        setError(
-          "Your member account is not active. Please contact the administrator."
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      setMember(
-        memberData as Member
-      );
-
-      /*
-       * LOAD POOLED TRADES
-       */
-
-      const {
-        data: tradeData,
-        error: tradeError,
-      } = await supabase
-        .from("trades")
-        .select(
-          `
-          id,
-          symbol,
-          trade_type,
-          quantity,
-          price,
-          total_amount,
-          trade_date,
-          notes
-          `
-        )
-        .order("trade_date", {
+        .select("id, full_name")
+        .order("full_name", {
           ascending: true,
         });
 
-      if (tradeError) {
+      if (error) {
         console.error(
-          "Trade loading error:",
-          tradeError
+          "Members list error:",
+          error
         );
-      } else {
-        const tradesWithProofs =
-          await loadTradeProofs(
-            tradeData ?? []
-          );
 
-        setTrades(
-          tradesWithProofs
-        );
+        setAllMembers([]);
+        return;
       }
 
-      /*
-       * LOAD THIS MEMBER'S WITHDRAWALS
-       */
+      setAllMembers(
+        (data ?? []) as AllMember[]
+      );
+    } catch (error) {
+      console.error(
+        "Members list exception:",
+        error
+      );
 
+      setAllMembers([]);
+    } finally {
+      setMembersLoading(false);
+    }
+  }
+
+  /* =========================================================
+     LOAD TRANSACTIONS
+  ========================================================= */
+
+  async function loadTransactions() {
+    setTransactionsLoading(true);
+
+    try {
       const {
-        data: withdrawalData,
-        error: withdrawalError,
+        data,
+        error,
+      } = await supabase
+        .from("transactions")
+        .select(
+          `
+          id,
+          member_id,
+          type,
+          amount,
+          description,
+          status,
+          created_at
+        `
+        )
+        .order("created_at", {
+          ascending: false,
+        });
+
+      if (error) {
+        console.error(
+          "Transactions loading error:",
+          error
+        );
+
+        setTransactions([]);
+        return;
+      }
+
+      setTransactions(
+        (data ?? []) as Transaction[]
+      );
+    } catch (error) {
+      console.error(
+        "Transactions exception:",
+        error
+      );
+
+      setTransactions([]);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  }
+
+  /* =========================================================
+     LOAD WITHDRAWALS
+  ========================================================= */
+
+  async function loadWithdrawalsForMember(
+    memberId: string
+  ) {
+    setWithdrawalsLoading(true);
+
+    try {
+      const {
+        data,
+        error,
       } = await supabase
         .from("withdrawals")
         .select(
@@ -769,49 +600,255 @@ export default function MemberDashboard() {
           reviewed_by,
           reviewed_at,
           created_at
-          `
+        `
         )
-        .eq(
-          "member_id",
-          memberData.id
-        )
+        .eq("member_id", memberId)
         .order("created_at", {
           ascending: false,
         });
 
-      if (withdrawalError) {
+      if (error) {
         console.error(
-          "Withdrawal loading error:",
-          withdrawalError
+          "Withdrawals loading error:",
+          error
         );
+
+        setWithdrawals([]);
+        return;
+      }
+
+      setWithdrawals(
+        (data ?? []) as Withdrawal[]
+      );
+    } catch (error) {
+      console.error(
+        "Withdrawals exception:",
+        error
+      );
+
+      setWithdrawals([]);
+    } finally {
+      setWithdrawalsLoading(false);
+    }
+  }
+
+  /* =========================================================
+     LOAD TRADES
+  ========================================================= */
+
+  async function loadTrades(memberId: string) {
+    setTradesLoading(true);
+
+    try {
+      const {
+        data: tradeData,
+        error: tradeError,
+      } = await supabase
+        .from("trades")
+        .select(
+          `
+          id,
+          trade_name,
+          invested_amount,
+          approx_return,
+          status,
+          trade_date,
+          notes,
+          trader_id
+        `
+        )
+        .order("trade_date", {
+          ascending: false,
+        });
+
+      if (tradeError) {
+        console.error(
+          "Trades loading error:",
+          tradeError
+        );
+
+        setTrades([]);
+        setTradeMembers([]);
+        setTradeFiles([]);
+        setTradeLogs([]);
+
+        return;
+      }
+
+      const safeTrades =
+        (tradeData ?? []) as Trade[];
+
+      setTrades(safeTrades);
+
+      if (safeTrades.length === 0) {
+        setTradeMembers([]);
+        setTradeFiles([]);
+        setTradeLogs([]);
+        return;
+      }
+
+      const tradeIds =
+        safeTrades.map(
+          (trade) => trade.id
+        );
+
+      const {
+        data: tradeMemberData,
+        error: tradeMemberError,
+      } = await supabase
+        .from("trade_members")
+        .select(
+          `
+          id,
+          trade_id,
+          member_id,
+          invested_amount,
+          created_at
+        `
+        )
+        .eq("member_id", memberId);
+
+      if (tradeMemberError) {
+        console.error(
+          "Trade members loading error:",
+          tradeMemberError
+        );
+
+        setTradeMembers([]);
       } else {
-        setWithdrawals(
-          (withdrawalData ?? []) as Withdrawal[]
+        setTradeMembers(
+          (tradeMemberData ?? []) as TradeMember[]
+        );
+      }
+
+      const {
+        data: tradeFileData,
+        error: tradeFileError,
+      } = await supabase
+        .from("trade_files")
+        .select(
+          `
+          id,
+          trade_id,
+          category,
+          file_url,
+          created_at
+        `
+        )
+        .in("trade_id", tradeIds)
+        .order("created_at", {
+          ascending: true,
+        });
+
+      if (tradeFileError) {
+        console.error(
+          "Trade files loading error:",
+          tradeFileError
+        );
+
+        setTradeFiles([]);
+      } else {
+        setTradeFiles(
+          (tradeFileData ?? []) as TradeFile[]
+        );
+      }
+
+      const {
+        data: tradeLogData,
+        error: tradeLogError,
+      } = await supabase
+        .from("trade_logs")
+        .select(
+          `
+          id,
+          trade_id,
+          description,
+          created_at
+        `
+        )
+        .in("trade_id", tradeIds)
+        .order("created_at", {
+          ascending: false,
+        });
+
+      if (tradeLogError) {
+        console.error(
+          "Trade logs loading error:",
+          tradeLogError
+        );
+
+        setTradeLogs([]);
+      } else {
+        setTradeLogs(
+          (tradeLogData ?? []) as TradeLog[]
         );
       }
     } catch (error) {
       console.error(
-        "Member dashboard error:",
+        "Trades exception:",
         error
       );
 
-      setError(
-        "Something went wrong while loading your account."
-      );
+      setTrades([]);
+      setTradeMembers([]);
+      setTradeFiles([]);
+      setTradeLogs([]);
     } finally {
-      setLoading(false);
+      setTradesLoading(false);
     }
   }
 
+  /* =========================================================
+     RELOAD
+  ========================================================= */
+
+  async function reloadMemberData() {
+    if (!member?.id) return;
+
+    await Promise.all([
+      loadWithdrawalsForMember(member.id),
+      loadTransactions(),
+      loadTrades(member.id),
+    ]);
+  }
+
+  /* =========================================================
+     NAVIGATION
+  ========================================================= */
+
+  function changeSection(section: Section) {
+    setActiveSection(section);
+    setMobileMenuOpen(false);
+  }
+
+  /* =========================================================
+     LOGOUT
+  ========================================================= */
+
+  async function handleLogout() {
+    try {
+      await supabase.auth.signOut();
+
+      router.replace("/login");
+      router.refresh();
+    } catch (error) {
+      console.error(
+        "Logout error:",
+        error
+      );
+    }
+  }
+
+  /* =========================================================
+     WITHDRAWAL
+  ========================================================= */
+
   async function submitWithdrawal() {
-    if (submittingWithdrawal) return;
-
-    setError("");
-
-    if (!member) {
-      setError(
+    if (!member?.id) {
+      setWithdrawalMessage(
         "Member account not found."
       );
+
       return;
     }
 
@@ -820,1432 +857,1064 @@ export default function MemberDashboard() {
     );
 
     if (
-      !Number.isFinite(amount) ||
+      !withdrawalAmount ||
+      Number.isNaN(amount) ||
       amount <= 0
     ) {
-      setError(
+      setWithdrawalMessage(
         "Please enter a valid withdrawal amount."
       );
-      return;
-    }
 
-    if (
-      amount >
-      Number(member.investment_amount || 0)
-    ) {
-      setError(
-        "Withdrawal amount cannot be greater than your current investment."
-      );
-      return;
-    }
-
-    if (!withdrawalMethod) {
-      setError(
-        "Please select a withdrawal method."
-      );
       return;
     }
 
     if (!accountDetails.trim()) {
-      setError(
-        "Please enter your payment/account details."
+      setWithdrawalMessage(
+        "Please enter your account details."
       );
+
       return;
     }
 
-    setSubmittingWithdrawal(true);
+    setWithdrawalSubmitting(true);
+    setWithdrawalMessage("");
 
     try {
-      const supabase = createClient();
-
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        error,
+      } = await supabase
+        .from("withdrawals")
+        .insert({
+          member_id: member.id,
+          amount,
+          method: withdrawalMethod,
+          account_details:
+            accountDetails.trim(),
+          status: "pending",
+        });
 
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-
-      const { error: insertError } =
-        await supabase
-          .from("withdrawals")
-          .insert({
-            member_id: member.id,
-            amount,
-            method: withdrawalMethod,
-            account_details:
-              accountDetails.trim(),
-            status: "pending",
-          });
-
-      if (insertError) {
+      if (error) {
         console.error(
-          "Withdrawal insert error:",
-          insertError
+          "Withdrawal submission error:",
+          error
         );
 
-        setError(
-          insertError.message
+        setWithdrawalMessage(
+          error.message ||
+            "Unable to submit withdrawal request."
         );
 
-        setSubmittingWithdrawal(false);
         return;
       }
+
+      setWithdrawalMessage(
+        "Withdrawal request submitted successfully."
+      );
 
       setWithdrawalAmount("");
-      setWithdrawalMethod("upi");
       setAccountDetails("");
 
-      setShowWithdrawalModal(false);
+      await loadWithdrawalsForMember(
+        member.id
+      );
 
-      await loadMember();
+      setTimeout(() => {
+        setShowWithdrawalModal(false);
+        setWithdrawalMessage("");
+      }, 1200);
     } catch (error) {
       console.error(
-        "Withdrawal request error:",
+        "Withdrawal exception:",
         error
       );
 
-      setError(
-        "Unable to submit withdrawal request."
+      setWithdrawalMessage(
+        "Something went wrong while submitting the request."
       );
     } finally {
-      setSubmittingWithdrawal(false);
+      setWithdrawalSubmitting(false);
     }
   }
 
-  function closeWithdrawalModal() {
-    if (submittingWithdrawal) return;
+  /* =========================================================
+     MEMBER BALANCES
+  ========================================================= */
 
-    setShowWithdrawalModal(false);
+  const memberTransactions = useMemo(() => {
+    if (!member?.id) return [];
 
-    setWithdrawalAmount("");
-    setWithdrawalMethod("upi");
-    setAccountDetails("");
-  }
-
-  function openProofViewer(
-    trade: Trade,
-    index = 0
-  ) {
-    if (!trade.proofPhotos?.length) {
-      return;
-    }
-
-    setSelectedTrade(trade);
-    setSelectedProofIndex(index);
-    setShowProofModal(true);
-  }
-
-  function closeProofViewer() {
-    setShowProofModal(false);
-    setSelectedTrade(null);
-    setSelectedProofIndex(0);
-  }
-
-  function previousProof() {
-    if (!selectedTrade) return;
-
-    setSelectedProofIndex(
-      (current) =>
-        current === 0
-          ? selectedTrade.proofPhotos.length - 1
-          : current - 1
+    return transactions.filter(
+      (transaction) =>
+        transaction.member_id ===
+        member.id
     );
-  }
+  }, [transactions, member]);
 
-  function nextProof() {
-    if (!selectedTrade) return;
+  const memberDeposits = useMemo(() => {
+    if (!member?.id) return 0;
 
-    setSelectedProofIndex(
-      (current) =>
-        current ===
-        selectedTrade.proofPhotos.length - 1
-          ? 0
-          : current + 1
-    );
-  }
-
-  async function logout() {
-    const supabase = createClient();
-
-    await supabase.auth.signOut();
-
-    router.replace("/login");
-    router.refresh();
-  }
-
-  function formatCurrency(
-    value: number
-  ) {
-    return `₹${Number(
-      value || 0
-    ).toLocaleString("en-IN", {
-      maximumFractionDigits: 2,
-    })}`;
-  }
-
-  function formatMethod(
-    method: string
-  ) {
-    return method
-      .replaceAll("_", " ")
-      .replace(
-        /\b\w/g,
-        (letter) =>
-          letter.toUpperCase()
-      );
-  }
-
-  const totalTradeValue =
-    trades.reduce(
-      (sum, trade) =>
-        sum +
-        Number(
-          trade.total_amount || 0
-        ),
-      0
-    );
-
-  const buyTrades =
-    trades.filter(
-      (trade) =>
-        trade.trade_type
-          .toLowerCase() ===
-        "buy"
-    );
-
-  const sellTrades =
-    trades.filter(
-      (trade) =>
-        trade.trade_type
-          .toLowerCase() ===
-        "sell"
-    );
-
-  const totalBuyValue =
-    buyTrades.reduce(
-      (sum, trade) =>
-        sum +
-        Number(
-          trade.total_amount || 0
-        ),
-      0
-    );
-
-  const totalSellValue =
-    sellTrades.reduce(
-      (sum, trade) =>
-        sum +
-        Number(
-          trade.total_amount || 0
-        ),
-      0
-    );
-
-  const uniqueSymbols =
-    new Set(
-      trades.map(
-        (trade) => trade.symbol
+    return memberTransactions
+      .filter(
+        (transaction) =>
+          transaction.type === "deposit"
       )
-    ).size;
-
-  const pendingWithdrawals =
-    withdrawals.filter(
-      (withdrawal) =>
-        withdrawal.status?.toLowerCase() ===
-        "pending"
-    );
-
-  /*
-   * PORTFOLIO PERFORMANCE
-   */
-
-  const performanceData =
-    useMemo<PerformancePoint[]>(() => {
-      const startingInvestment =
-        Number(
-          member?.investment_amount || 0
-        );
-
-      if (!trades.length) {
-        return [
-          {
-            date: new Date().toISOString(),
-            label: "Now",
-            value: startingInvestment,
-          },
-        ];
-      }
-
-      let runningValue =
-        startingInvestment;
-
-      const points: PerformancePoint[] =
-        [];
-
-      points.push({
-        date: trades[0].trade_date,
-        label: "Start",
-        value: runningValue,
-      });
-
-      trades.forEach((trade) => {
-        const amount =
+      .reduce(
+        (total, transaction) =>
+          total +
           Number(
-            trade.total_amount || 0
-          );
-
-        const type =
-          trade.trade_type.toLowerCase();
-
-        if (type === "buy") {
-          runningValue += amount;
-        }
-
-        if (type === "sell") {
-          runningValue -= amount;
-        }
-
-        points.push({
-          date: trade.trade_date,
-          label: new Date(
-            trade.trade_date
-          ).toLocaleDateString(
-            "en-IN",
-            {
-              day: "2-digit",
-              month: "short",
-            }
+            transaction.amount || 0
           ),
-          value: Math.max(
-            0,
-            runningValue
+        0
+      );
+  }, [memberTransactions, member]);
+
+  const memberWithdrawals = useMemo(() => {
+    if (!member?.id) return 0;
+
+    return withdrawals
+      .filter(
+        (withdrawal) =>
+          withdrawal.status ===
+            "approved" ||
+          withdrawal.status ===
+            "completed"
+      )
+      .reduce(
+        (total, withdrawal) =>
+          total +
+          Number(
+            withdrawal.amount || 0
           ),
-        });
-      });
+        0
+      );
+  }, [withdrawals, member]);
 
-      return points;
-    }, [trades, member]);
+  const memberBalance = useMemo(() => {
+    if (!member) return 0;
 
-  const performanceStart =
-    performanceData[0]?.value || 0;
-
-  const performanceCurrent =
-    performanceData[
-      performanceData.length - 1
-    ]?.value || 0;
-
-  const performanceChange =
-    performanceCurrent -
-    performanceStart;
-
-  const performancePercentage =
-    performanceStart > 0
-      ? (performanceChange /
-          performanceStart) *
-        100
-      : 0;
-
-  const performancePositive =
-    performanceChange >= 0;
-
-  const chart = useMemo(() => {
-    if (!performanceData.length) {
-      return null;
-    }
-
-    const width = 900;
-    const height = 300;
-
-    const paddingX = 25;
-    const paddingY = 25;
-
-    const values =
-      performanceData.map(
-        (point) => point.value
+    const baseAmount =
+      Number(
+        member.investment_amount || 0
       );
 
-    let minValue =
-      Math.min(...values);
+    return (
+      baseAmount +
+      memberDeposits -
+      memberWithdrawals
+    );
+  }, [
+    member,
+    memberDeposits,
+    memberWithdrawals,
+  ]);
 
-    let maxValue =
-      Math.max(...values);
+  /* =========================================================
+     COOPERATIVE BALANCE
+  ========================================================= */
 
-    if (
-      minValue === maxValue
-    ) {
-      const padding =
-        Math.max(
-          1000,
-          maxValue * 0.05
+  const cooperativeDeposits = useMemo(() => {
+    return transactions
+      .filter(
+        (transaction) =>
+          transaction.type === "deposit"
+      )
+      .reduce(
+        (total, transaction) =>
+          total +
+          Number(
+            transaction.amount || 0
+          ),
+        0
+      );
+  }, [transactions]);
+
+  const cooperativeWithdrawals = useMemo(() => {
+    return transactions
+      .filter(
+        (transaction) =>
+          transaction.type ===
+          "withdrawal"
+      )
+      .reduce(
+        (total, transaction) =>
+          total +
+          Number(
+            transaction.amount || 0
+          ),
+        0
+      );
+  }, [transactions]);
+
+  const cooperativeOthers = useMemo(() => {
+    return transactions
+      .filter(
+        (transaction) =>
+          transaction.type ===
+          "expense"
+      )
+      .reduce(
+        (total, transaction) =>
+          total +
+          Number(
+            transaction.amount || 0
+          ),
+        0
+      );
+  }, [transactions]);
+
+  const cooperativeBalance = useMemo(() => {
+    return (
+      cooperativeDeposits -
+      cooperativeWithdrawals -
+      cooperativeOthers
+    );
+  }, [
+    cooperativeDeposits,
+    cooperativeWithdrawals,
+    cooperativeOthers,
+  ]);
+
+  /* =========================================================
+     TRADE DATA
+  ========================================================= */
+
+  const memberTradeContributions = useMemo(() => {
+    const map: Record<string, number> = {};
+
+    for (const item of tradeMembers) {
+      map[item.trade_id] =
+        Number(
+          item.invested_amount || 0
         );
-
-      minValue -= padding;
-      maxValue += padding;
     }
 
-    const range =
-      maxValue - minValue;
+    return map;
+  }, [tradeMembers]);
 
-    const points =
-      performanceData.map(
-        (point, index) => {
-          const x =
-            performanceData.length ===
-            1
-              ? width / 2
-              : paddingX +
-                (index /
-                  (performanceData.length -
-                    1)) *
-                  (width -
-                    paddingX * 2);
+  const ongoingTrades = useMemo(() => {
+    return trades.filter(
+      (trade) =>
+        trade.status === "ongoing"
+    );
+  }, [trades]);
 
-          const y =
-            height -
-            paddingY -
-            ((point.value -
-              minValue) /
-              range) *
-              (height -
-                paddingY * 2);
+  const successfulTrades = useMemo(() => {
+    return trades.filter(
+      (trade) =>
+        trade.status === "successful"
+    );
+  }, [trades]);
 
-          return {
-            ...point,
-            x,
-            y,
-          };
-        }
-      );
+  const failedTrades = useMemo(() => {
+    return trades.filter(
+      (trade) =>
+        trade.status === "failed"
+    );
+  }, [trades]);
 
-    const linePath =
-      points
-        .map(
-          (point, index) =>
-            `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`
-        )
-        .join(" ");
+  const totalTradeCapital = useMemo(() => {
+    return trades.reduce(
+      (total, trade) =>
+        total +
+        Number(
+          trade.invested_amount || 0
+        ),
+      0
+    );
+  }, [trades]);
 
-    const areaPath =
-      `${linePath} L ${points[points.length - 1].x} ${height - paddingY} L ${points[0].x} ${height - paddingY} Z`;
+  function getTradeContribution(
+    tradeId: string
+  ) {
+    return (
+      memberTradeContributions[
+        tradeId
+      ] ?? 0
+    );
+  }
 
-    return {
-      width,
-      height,
-      points,
-      linePath,
-      areaPath,
-      minValue,
-      maxValue,
-    };
-  }, [performanceData]);
+  function getTradeFiles(
+    tradeId: string
+  ) {
+    return tradeFiles.filter(
+      (file) =>
+        file.trade_id === tradeId
+    );
+  }
+
+  function getTradeLogs(
+    tradeId: string
+  ) {
+    return tradeLogs.filter(
+      (log) =>
+        log.trade_id === tradeId
+    );
+  }
+
+  function openTrade(trade: Trade) {
+    setSelectedTrade(trade);
+    setShowTradeModal(true);
+  }
+
+  function closeTrade() {
+    setShowTradeModal(false);
+    setSelectedTrade(null);
+  }
+
+  /* =========================================================
+     LOADING
+  ========================================================= */
 
   if (loading) {
     return (
       <>
-        <style>{mobileStyles}</style>
+        <style>{styles}</style>
 
-        <main style={loadingStyle}>
-          Loading Member Account...
+        <main className="tb-loading-page">
+          <div className="tb-loading-card">
+            <div className="tb-logo-glow">
+              <TrendingUp size={24} />
+            </div>
+
+            <div className="tb-spinner" />
+
+            <h2>
+              Loading TradeBishi
+            </h2>
+
+            <p>
+              Preparing your member dashboard...
+            </p>
+          </div>
         </main>
       </>
     );
   }
 
-  if (error && !member) {
+  /* =========================================================
+     ERROR
+  ========================================================= */
+
+  if (!member) {
     return (
       <>
-        <style>{mobileStyles}</style>
+        <style>{styles}</style>
 
-        <main style={loadingStyle}>
-          <div
-            style={{
-              maxWidth: "500px",
-              textAlign: "center",
-              padding: "30px",
-            }}
-          >
-            <Lock
-              size={32}
-              style={{
-                marginBottom: "15px",
-              }}
-            />
+        <main className="tb-loading-page">
+          <div className="tb-error-card">
+            <div className="tb-error-icon">
+              <XCircle size={28} />
+            </div>
 
-            <h2>{error}</h2>
+            <h2>
+              Unable to open member dashboard
+            </h2>
+
+            <p>
+              {pageError ||
+                "Your member account could not be loaded."}
+            </p>
 
             <button
+              type="button"
+              className="tb-primary-button"
               onClick={() =>
-                router.replace("/login")
+                router.refresh()
               }
-              style={primaryButton}
             >
-              Back to Login
+              Try Again
+            </button>
+
+            <button
+              type="button"
+              className="tb-secondary-button"
+              onClick={handleLogout}
+            >
+              <LogOut size={16} />
+              Sign Out
             </button>
           </div>
         </main>
       </>
     );
   }
+
+  /* =========================================================
+     RENDER
+  ========================================================= */
 
   return (
     <>
-      <style>{mobileStyles}</style>
+      <style>{styles}</style>
 
-      <main
-        style={pageStyle}
-        className="tb-mobile-page"
-      >
-        <div
-          style={containerStyle}
-          className="tb-mobile-container"
+      <div className="tb-app">
+
+        {/* SIDEBAR */}
+
+        <aside
+          className={`tb-sidebar ${
+            mobileMenuOpen
+              ? "tb-sidebar-open"
+              : ""
+          }`}
         >
-          {/* =================================================
-              HEADER
-          ================================================= */}
+          <div className="tb-brand">
+            <div className="tb-brand-mark">
+              <TrendingUp size={21} />
+            </div>
 
-          <header
-            style={headerStyle}
-            className="tb-mobile-header"
-          >
             <div>
-              <div style={eyebrowStyle}>
-                <TrendingUp size={15} />
-                TradeBishi Member
+              <div className="tb-brand-name">
+                TradeBishi
               </div>
 
-              <h1 style={titleStyle}>
-                Welcome, {userName}
-              </h1>
+              <div className="tb-brand-subtitle">
+                Member Portal
+              </div>
+            </div>
+          </div>
 
-              <p style={subtitleStyle}>
-                View your investment and
-                pooled trading activity.
-              </p>
+          <nav className="tb-nav">
+
+            <button
+              type="button"
+              className={`tb-nav-item ${
+                activeSection ===
+                "overview"
+                  ? "tb-nav-active"
+                  : ""
+              }`}
+              onClick={() =>
+                changeSection(
+                  "overview"
+                )
+              }
+            >
+              <BarChart3 size={18} />
+              <span>Overview</span>
+            </button>
+
+            <button
+              type="button"
+              className={`tb-nav-item ${
+                activeSection ===
+                "members"
+                  ? "tb-nav-active"
+                  : ""
+              }`}
+              onClick={() =>
+                changeSection(
+                  "members"
+                )
+              }
+            >
+              <Users size={18} />
+              <span>Members</span>
+            </button>
+
+            <button
+              type="button"
+              className={`tb-nav-item ${
+                activeSection ===
+                "cooperative"
+                  ? "tb-nav-active"
+                  : ""
+              }`}
+              onClick={() =>
+                changeSection(
+                  "cooperative"
+                )
+              }
+            >
+              <Activity size={18} />
+              <span>
+                Cooperative Activity
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className={`tb-nav-item ${
+                activeSection ===
+                "trades"
+                  ? "tb-nav-active"
+                  : ""
+              }`}
+              onClick={() =>
+                changeSection(
+                  "trades"
+                )
+              }
+            >
+              <TrendingUp size={18} />
+              <span>Trades</span>
+
+              {ongoingTrades.length > 0 && (
+                <span className="tb-nav-count">
+                  {ongoingTrades.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className={`tb-nav-item ${
+                activeSection ===
+                "withdrawals"
+                  ? "tb-nav-active"
+                  : ""
+              }`}
+              onClick={() =>
+                changeSection(
+                  "withdrawals"
+                )
+              }
+            >
+              <ArrowDownRight size={18} />
+              <span>Withdrawals</span>
+            </button>
+
+            <button
+              type="button"
+              className={`tb-nav-item ${
+                activeSection ===
+                "account"
+                  ? "tb-nav-active"
+                  : ""
+              }`}
+              onClick={() =>
+                changeSection(
+                  "account"
+                )
+              }
+            >
+              <Lock size={18} />
+              <span>Account</span>
+            </button>
+
+          </nav>
+
+          <div className="tb-sidebar-bottom">
+
+            <div className="tb-user-mini">
+              <div className="tb-avatar">
+                {member.full_name
+                  ?.charAt(0)
+                  ?.toUpperCase() ||
+                  "M"}
+              </div>
+
+              <div className="tb-user-mini-info">
+                <strong>
+                  {member.full_name}
+                </strong>
+
+                <span>
+                  Member
+                </span>
+              </div>
             </div>
 
             <button
               type="button"
-              onClick={logout}
-              style={logoutButton}
+              onClick={handleLogout}
+              className="tb-logout-button"
             >
-              <LogOut size={17} />
-              Sign Out
+              <LogOut size={16} />
+              <span>
+                Sign Out
+              </span>
             </button>
+
+          </div>
+        </aside>
+
+        {/* MOBILE OVERLAY */}
+
+        {mobileMenuOpen && (
+          <button
+            type="button"
+            aria-label="Close menu"
+            className="tb-mobile-overlay"
+            onClick={() =>
+              setMobileMenuOpen(false)
+            }
+          />
+        )}
+
+        {/* MAIN */}
+
+        <main className="tb-main">
+
+          <header className="tb-header">
+
+            <div className="tb-header-left">
+
+              <button
+                type="button"
+                className="tb-mobile-menu"
+                onClick={() =>
+                  setMobileMenuOpen(true)
+                }
+              >
+                <Activity size={20} />
+              </button>
+
+              <div>
+                <h1>
+                  {activeSection === "overview" &&
+                    "Overview"}
+
+                  {activeSection === "members" &&
+                    "Members"}
+
+                  {activeSection === "cooperative" &&
+                    "Cooperative Activity"}
+
+                  {activeSection === "trades" &&
+                    "Trades"}
+
+                  {activeSection === "withdrawals" &&
+                    "Withdrawals"}
+
+                  {activeSection === "account" &&
+                    "Account"}
+                </h1>
+
+                <p>
+                  Welcome back,{" "}
+                  {member.full_name}
+                </p>
+              </div>
+
+            </div>
+
+            <div className="tb-header-right">
+              <div className="tb-header-status">
+                <span className="tb-online-dot" />
+                Active Member
+              </div>
+            </div>
+
           </header>
 
-          {/* =================================================
-              ERROR
-          ================================================= */}
+          <div className="tb-content">
 
-          {error && (
-            <div style={errorBox}>
-              {error}
-            </div>
-          )}
+            {/* =================================================
+                OVERVIEW
+            ================================================= */}
 
-          {/* =================================================
-              MEMBER OVERVIEW
-          ================================================= */}
+            {activeSection === "overview" && (
+              <section>
 
-          <div
-            style={statsGrid}
-            className="tb-mobile-stats"
-          >
-            <Stat
-              icon={<Wallet size={18} />}
-              title="Your Investment"
-              value={formatCurrency(
-                Number(
-                  member?.investment_amount ||
-                    0
-                )
-              )}
-            />
+                <div className="tb-page-intro">
+                  <div>
+                    <div className="tb-eyebrow">
+                      MEMBER DASHBOARD
+                    </div>
 
-            <Stat
-              icon={<BarChart3 size={18} />}
-              title="Profit Share"
-              value={`${Number(
-                member?.profit_share || 0
-              ).toFixed(2)}%`}
-            />
+                    <h2>
+                      Member Overview
+                    </h2>
 
-            <Stat
-              icon={<Activity size={18} />}
-              title="Pooled Trades"
-              value={trades.length.toString()}
-            />
-
-            <Stat
-              icon={<TrendingUp size={18} />}
-              title="Trade Volume"
-              value={formatCurrency(
-                totalTradeValue
-              )}
-            />
-          </div>
-
-          {/* =================================================
-              PORTFOLIO PERFORMANCE
-          ================================================= */}
-
-          <section
-            style={portfolioSection}
-            className="tb-mobile-portfolio"
-          >
-            <div
-              style={portfolioHeader}
-              className="tb-mobile-portfolio-header"
-            >
-              <div>
-                <div style={portfolioEyebrow}>
-                  <TrendingUp size={14} />
-                  PORTFOLIO
-                </div>
-
-                <h2 style={portfolioTitle}>
-                  Portfolio Performance
-                </h2>
-
-                <p style={portfolioSubtitle}>
-                  Your portfolio activity based
-                  on recorded pooled trades.
-                </p>
-              </div>
-
-              <div className="tb-mobile-current-value">
-                <div
-                  style={{
-                    color:
-                      "rgba(255,255,255,0.38)",
-                    fontSize: "11px",
-                    textTransform:
-                      "uppercase",
-                    letterSpacing:
-                      "0.08em",
-                  }}
-                >
-                  Current Tracked Value
-                </div>
-
-                <strong
-                  style={{
-                    display: "block",
-                    marginTop: "5px",
-                    fontSize: "24px",
-                  }}
-                >
-                  {formatCurrency(
-                    performanceCurrent
-                  )}
-                </strong>
-              </div>
-            </div>
-
-            <div
-              style={performanceSummaryGrid}
-              className="tb-mobile-performance-summary"
-            >
-              <div style={performanceMiniCard}>
-                <span style={miniLabel}>
-                  Starting Value
-                </span>
-
-                <strong style={miniValue}>
-                  {formatCurrency(
-                    performanceStart
-                  )}
-                </strong>
-              </div>
-
-              <div style={performanceMiniCard}>
-                <span style={miniLabel}>
-                  Current Tracked Value
-                </span>
-
-                <strong style={miniValue}>
-                  {formatCurrency(
-                    performanceCurrent
-                  )}
-                </strong>
-              </div>
-
-              <div style={performanceMiniCard}>
-                <span style={miniLabel}>
-                  Activity Change
-                </span>
-
-                <strong
-                  style={{
-                    ...miniValue,
-                    color:
-                      performancePositive
-                        ? "#34d399"
-                        : "#f87171",
-                  }}
-                >
-                  {performancePositive
-                    ? "+"
-                    : ""}
-                  {formatCurrency(
-                    performanceChange
-                  )}
-                </strong>
-
-                <span
-                  style={{
-                    display: "block",
-                    marginTop: "4px",
-                    color:
-                      performancePositive
-                        ? "#34d399"
-                        : "#f87171",
-                    fontSize: "11px",
-                  }}
-                >
-                  {performancePositive
-                    ? "+"
-                    : ""}
-                  {performancePercentage.toFixed(
-                    2
-                  )}
-                  %
-                </span>
-              </div>
-            </div>
-
-            <div
-              style={chartContainer}
-              className="tb-mobile-chart"
-            >
-              {chart ? (
-                <>
-                  <svg
-                    viewBox={`0 0 ${chart.width} ${chart.height}`}
-                    width="100%"
-                    height="300"
-                    preserveAspectRatio="none"
-                    style={{
-                      display: "block",
-                    }}
-                  >
-                    <defs>
-                      <linearGradient
-                        id="portfolioGradient"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor="rgba(255,255,255,0.18)"
-                        />
-
-                        <stop
-                          offset="100%"
-                          stopColor="rgba(255,255,255,0)"
-                        />
-                      </linearGradient>
-                    </defs>
-
-                    <line
-                      x1="25"
-                      y1="25"
-                      x2="875"
-                      y2="25"
-                      stroke="rgba(255,255,255,0.06)"
-                    />
-
-                    <line
-                      x1="25"
-                      y1="150"
-                      x2="875"
-                      y2="150"
-                      stroke="rgba(255,255,255,0.06)"
-                    />
-
-                    <line
-                      x1="25"
-                      y1="275"
-                      x2="875"
-                      y2="275"
-                      stroke="rgba(255,255,255,0.06)"
-                    />
-
-                    <path
-                      d={chart.areaPath}
-                      fill="url(#portfolioGradient)"
-                    />
-
-                    <path
-                      d={chart.linePath}
-                      fill="none"
-                      stroke="white"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-
-                    {chart.points.map(
-                      (point, index) => (
-                        <circle
-                          key={`${point.date}-${index}`}
-                          cx={point.x}
-                          cy={point.y}
-                          r={
-                            index ===
-                            chart.points.length - 1
-                              ? 5
-                              : 3
-                          }
-                          fill="white"
-                          stroke="#111"
-                          strokeWidth="2"
-                        />
-                      )
-                    )}
-                  </svg>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent:
-                        "space-between",
-                      marginTop: "8px",
-                      padding:
-                        "0 8px",
-                      color:
-                        "rgba(255,255,255,0.3)",
-                      fontSize: "10px",
-                    }}
-                  >
-                    <span>
-                      {performanceData[0]
-                        ? new Date(
-                            performanceData[0]
-                              .date
-                          ).toLocaleDateString(
-                            "en-IN",
-                            {
-                              day: "2-digit",
-                              month: "short",
-                              year: "numeric",
-                            }
-                          )
-                        : ""}
-                    </span>
-
-                    <span>
-                      {performanceData[
-                        performanceData.length -
-                          1
-                      ]
-                        ? new Date(
-                            performanceData[
-                              performanceData.length -
-                                1
-                            ].date
-                          ).toLocaleDateString(
-                            "en-IN",
-                            {
-                              day: "2-digit",
-                              month: "short",
-                              year: "numeric",
-                            }
-                          )
-                        : ""}
-                    </span>
+                    <p>
+                      A quick view of your
+                      account and cooperative
+                      activity.
+                    </p>
                   </div>
-                </>
-              ) : (
-                <div style={emptyState}>
-                  No performance data available.
-                </div>
-              )}
-            </div>
 
-            <div style={performanceDisclaimer}>
-              <Lock size={13} />
-
-              <span>
-                This chart reflects recorded
-                portfolio activity. Actual
-                realized/unrealized P&amp;L will
-                require current market prices and
-                holdings-level valuation.
-              </span>
-            </div>
-          </section>
-
-          {/* =================================================
-              WITHDRAWAL ACTION
-          ================================================= */}
-
-          <section
-            style={withdrawalSection}
-            className="tb-mobile-withdrawal"
-          >
-            <div>
-              <div style={withdrawalTitleRow}>
-                <Wallet size={20} />
-
-                <h2 style={withdrawalTitle}>
-                  Withdraw Funds
-                </h2>
-              </div>
-
-              <p style={withdrawalSubtitle}>
-                Request a withdrawal from your
-                investment. An administrator will
-                review your request.
-              </p>
-
-              {pendingWithdrawals.length >
-                0 && (
-                <div style={pendingNotice}>
-                  <Clock size={15} />
-
-                  You have{" "}
-                  {pendingWithdrawals.length}{" "}
-                  pending withdrawal{" "}
-                  {pendingWithdrawals.length ===
-                  1
-                    ? "request"
-                    : "requests"}
-                  .
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                setShowWithdrawalModal(true)
-              }
-              style={withdrawButton}
-              className="tb-mobile-withdrawal-button"
-            >
-              <Plus size={17} />
-              Request Withdrawal
-            </button>
-          </section>
-
-          {/* =================================================
-              WITHDRAWAL HISTORY
-          ================================================= */}
-
-          <section
-            style={sectionStyle}
-            className="tb-mobile-section"
-          >
-            <div
-              style={sectionHeaderStyle}
-              className="tb-mobile-section-header"
-            >
-              <div>
-                <h2 style={sectionTitle}>
-                  Withdrawal Requests
-                </h2>
-
-                <p
-                  style={sectionSubtitle}
-                >
-                  Track your withdrawal
-                  requests and their status.
-                </p>
-              </div>
-
-              <span
-                style={{
-                  color:
-                    "rgba(255,255,255,0.35)",
-                  fontSize: "12px",
-                }}
-              >
-                {withdrawals.length}{" "}
-                {withdrawals.length === 1
-                  ? "request"
-                  : "requests"}
-              </span>
-            </div>
-
-            {withdrawals.length === 0 ? (
-              <div style={emptyState}>
-                <Wallet
-                  size={28}
-                  style={{
-                    opacity: 0.5,
-                    marginBottom: "10px",
-                  }}
-                />
-
-                <div>
-                  No withdrawal requests yet.
+                  <div className="tb-intro-date">
+                    {formatDate(
+                      new Date().toISOString()
+                    )}
+                  </div>
                 </div>
 
-                <p
-                  style={{
-                    marginTop: "6px",
-                    fontSize: "12px",
-                    opacity: 0.7,
-                  }}
-                >
-                  Your withdrawal requests
-                  will appear here.
-                </p>
-              </div>
-            ) : (
-              <div style={withdrawalList}>
-                {withdrawals.map(
-                  (withdrawal) => (
-                    <div
-                      key={withdrawal.id}
-                      style={withdrawalRow}
-                      className="tb-mobile-withdrawal-row"
-                    >
-                      <div>
-                        <strong
-                          style={{
-                            display:
-                              "block",
-                            fontSize:
-                              "16px",
-                          }}
-                        >
-                          {formatCurrency(
-                            Number(
-                              withdrawal.amount
-                            )
-                          )}
-                        </strong>
+                <div className="tb-stat-grid">
 
-                        <span
-                          style={{
-                            display:
-                              "block",
-                            marginTop:
-                              "5px",
-                            color:
-                              "rgba(255,255,255,0.35)",
-                            fontSize:
-                              "11px",
-                          }}
-                        >
-                          {formatMethod(
-                            withdrawal.method
-                          )}
-                        </span>
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-top">
+                      <div className="tb-stat-icon">
+                        <Wallet size={20} />
                       </div>
 
-                      <div
-                        style={{
-                          textAlign:
-                            "right",
-                        }}
-                      >
-                        <WithdrawalStatus
-                          status={
-                            withdrawal.status
-                          }
-                        />
-
-                        <span
-                          style={{
-                            display:
-                              "block",
-                            marginTop:
-                              "6px",
-                            color:
-                              "rgba(255,255,255,0.3)",
-                            fontSize:
-                              "11px",
-                          }}
-                        >
-                          {new Date(
-                            withdrawal.created_at
-                          ).toLocaleString(
-                            "en-IN"
-                          )}
-                        </span>
-                      </div>
+                      <span className="tb-stat-dot" />
                     </div>
-                  )
-                )}
-              </div>
-            )}
-          </section>
 
-          {/* =================================================
-              BUY / SELL SUMMARY
-          ================================================= */}
+                    <div className="tb-stat-label">
+                      Member Balance
+                    </div>
 
-          <div
-            style={summaryGrid}
-            className="tb-mobile-summary"
-          >
-            <SummaryCard
-              icon={
-                <ArrowUpRight size={17} />
-              }
-              title="Pooled Buy Value"
-              value={formatCurrency(
-                totalBuyValue
-              )}
-              subtitle={`${buyTrades.length} ${
-                buyTrades.length === 1
-                  ? "buy"
-                  : "buys"
-              }`}
-              positive
-            />
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        memberBalance
+                      )}
+                    </div>
 
-            <SummaryCard
-              icon={
-                <ArrowDownRight size={17} />
-              }
-              title="Pooled Sell Value"
-              value={formatCurrency(
-                totalSellValue
-              )}
-              subtitle={`${sellTrades.length} ${
-                sellTrades.length === 1
-                  ? "sell"
-                  : "sells"
-              }`}
-            />
+                    <div className="tb-stat-foot">
+                      Your current member balance
+                    </div>
+                  </div>
 
-            <SummaryCard
-              icon={
-                <BarChart3 size={17} />
-              }
-              title="Stocks Traded"
-              value={uniqueSymbols.toString()}
-              subtitle="Unique symbols"
-            />
-          </div>
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-top">
+                      <div className="tb-stat-icon">
+                        <CircleDollarSign size={20} />
+                      </div>
 
-          {/* =================================================
-              MEMBER ACCOUNT
-          ================================================= */}
+                      <span className="tb-stat-dot" />
+                    </div>
 
-          <section
-            style={sectionStyle}
-            className="tb-mobile-section"
-          >
-            <div
-              style={sectionHeaderStyle}
-              className="tb-mobile-section-header"
-            >
-              <div>
-                <h2 style={sectionTitle}>
-                  Your Account
-                </h2>
+                    <div className="tb-stat-label">
+                      Cooperative Balance
+                    </div>
 
-                <p
-                  style={sectionSubtitle}
-                >
-                  Your cooperative
-                  investment information.
-                </p>
-              </div>
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        cooperativeBalance
+                      )}
+                    </div>
 
-              <span
-                style={{
-                  padding: "7px 11px",
-                  borderRadius: "10px",
-                  background:
-                    member?.status ===
-                    "active"
-                      ? "rgba(52,211,153,0.1)"
-                      : "rgba(248,113,113,0.1)",
-                  color:
-                    member?.status ===
-                    "active"
-                      ? "#34d399"
-                      : "#f87171",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  textTransform:
-                    "capitalize",
-                }}
-              >
-                {member?.status}
-              </span>
-            </div>
+                    <div className="tb-stat-foot">
+                      Common cooperative balance
+                    </div>
+                  </div>
 
-            <div
-              style={accountGrid}
-              className="tb-mobile-account-grid"
-            >
-              <AccountItem
-                label="Member Name"
-                value={
-                  member?.full_name ||
-                  userName
-                }
-              />
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-top">
+                      <div className="tb-stat-icon">
+                        <TrendingUp size={20} />
+                      </div>
 
-              <AccountItem
-                label="Phone"
-                value={
-                  member?.phone ||
-                  "Not provided"
-                }
-              />
+                      <span className="tb-stat-dot" />
+                    </div>
 
-              <AccountItem
-                label="Investment"
-                value={formatCurrency(
-                  Number(
-                    member?.investment_amount ||
-                      0
-                  )
-                )}
-              />
+                    <div className="tb-stat-label">
+                      Active Trades
+                    </div>
 
-              <AccountItem
-                label="Profit Share"
-                value={`${Number(
-                  member?.profit_share ||
-                    0
-                ).toFixed(2)}%`}
-              />
-            </div>
-          </section>
+                    <div className="tb-stat-value">
+                      {ongoingTrades.length}
+                    </div>
 
-          {/* =================================================
-              POOLED TRADES
-          ================================================= */}
+                    <div className="tb-stat-foot">
+                      Currently ongoing
+                    </div>
+                  </div>
 
-          <section
-            style={sectionStyle}
-            className="tb-mobile-section"
-          >
-            <div
-              style={sectionHeaderStyle}
-              className="tb-mobile-section-header"
-            >
-              <div>
-                <h2 style={sectionTitle}>
-                  Pooled Trades
-                </h2>
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-top">
+                      <div className="tb-stat-icon">
+                        <Users size={20} />
+                      </div>
 
-                <p
-                  style={sectionSubtitle}
-                >
-                  Trades executed on behalf
-                  of the cooperative pool.
-                </p>
-              </div>
+                      <span className="tb-stat-dot" />
+                    </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  color:
-                    "rgba(255,255,255,0.35)",
-                  fontSize: "12px",
-                  flexShrink: 0,
-                }}
-              >
-                <Lock size={14} />
-                Read Only
-              </div>
-            </div>
+                    <div className="tb-stat-label">
+                      Members
+                    </div>
 
-            {trades.length === 0 ? (
-              <div style={emptyState}>
-                <TrendingUp
-                  size={30}
-                  style={{
-                    marginBottom: "10px",
-                    opacity: 0.5,
-                  }}
-                />
+                    <div className="tb-stat-value">
+                      {allMembers.length}
+                    </div>
 
-                <div>
-                  No pooled trades have
-                  been recorded yet.
+                    <div className="tb-stat-foot">
+                      Cooperative members
+                    </div>
+                  </div>
+
                 </div>
 
-                <p
-                  style={{
-                    marginTop: "6px",
-                    fontSize: "12px",
-                    opacity: 0.7,
-                  }}
-                >
-                  Trading activity will
-                  appear here when your
-                  trader records a trade.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="tb-mobile-scroll-hint">
-                  <ChevronLeft size={12} />
-                  Swipe horizontally to view all trade details
-                  <ChevronRight size={12} />
+                <div className="tb-two-column">
+
+                  <div className="tb-panel">
+
+                    <div className="tb-panel-header">
+                      <div>
+                        <h3>
+                          Recent Activity
+                        </h3>
+
+                        <p>
+                          Latest cooperative
+                          transactions
+                        </p>
+                      </div>
+
+                      <Activity size={20} />
+                    </div>
+
+                    {transactionsLoading ? (
+                      <div className="tb-empty">
+                        Loading activity...
+                      </div>
+                    ) : memberTransactions.length === 0 ? (
+                      <div className="tb-empty">
+                        No activity found.
+                      </div>
+                    ) : (
+                      <div className="tb-activity-list">
+                        {memberTransactions
+                          .slice(0, 6)
+                          .map((transaction) => (
+                            <div
+                              key={transaction.id}
+                              className="tb-activity-row"
+                            >
+                              <div
+                                className={`tb-activity-icon ${
+                                  transaction.type ===
+                                  "deposit"
+                                    ? "tb-activity-positive"
+                                    : transaction.type ===
+                                          "withdrawal" ||
+                                        transaction.type ===
+                                          "expense"
+                                      ? "tb-activity-negative"
+                                      : ""
+                                }`}
+                              >
+                                {transaction.type ===
+                                "deposit" ? (
+                                  <ArrowUpRight size={17} />
+                                ) : (
+                                  <ArrowDownRight size={17} />
+                                )}
+                              </div>
+
+                              <div className="tb-activity-main">
+                                <strong>
+                                  {getActivityLabel(
+                                    transaction.type
+                                  )}
+                                </strong>
+
+                                <span>
+                                  {transaction.description ||
+                                    "No description"}
+                                </span>
+                              </div>
+
+                              <div className="tb-activity-amount">
+                                {formatCurrency(
+                                  transaction.amount
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+
+                  </div>
+
+                  <div className="tb-panel">
+
+                    <div className="tb-panel-header">
+                      <div>
+                        <h3>
+                          Your Trades
+                        </h3>
+
+                        <p>
+                          Recent trade participation
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="tb-panel-link"
+                        onClick={() =>
+                          changeSection("trades")
+                        }
+                      >
+                        View all
+                      </button>
+                    </div>
+
+                    {tradesLoading ? (
+                      <div className="tb-empty">
+                        Loading trades...
+                      </div>
+                    ) : trades.length === 0 ? (
+                      <div className="tb-empty">
+                        No trades available.
+                      </div>
+                    ) : (
+                      <div className="tb-trade-mini-list">
+                        {trades
+                          .slice(0, 5)
+                          .map((trade) => (
+                            <button
+                              key={trade.id}
+                              type="button"
+                              className="tb-trade-mini"
+                              onClick={() =>
+                                openTrade(trade)
+                              }
+                            >
+                              <div>
+                                <strong>
+                                  {trade.trade_name}
+                                </strong>
+
+                                <span>
+                                  {formatDate(
+                                    trade.trade_date
+                                  )}
+                                </span>
+                              </div>
+
+                              <div className="tb-trade-mini-right">
+                                <span
+                                  className={getTradeStatusClass(
+                                    trade.status
+                                  )}
+                                >
+                                  {getTradeStatusLabel(
+                                    trade.status
+                                  )}
+                                </span>
+
+                                <ChevronRight size={16} />
+                              </div>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+
+                  </div>
+
                 </div>
 
-                <div
-                  className="tb-mobile-trades"
-                  style={{
-                    overflowX: "auto",
-                  }}
-                >
-                  <div
-                    className="tb-mobile-trade-inner"
-                    style={{
-                      minWidth: "1050px",
+                <div className="tb-action-banner">
+
+                  <div className="tb-action-banner-icon">
+                    <ArrowDownRight size={22} />
+                  </div>
+
+                  <div className="tb-action-banner-content">
+                    <h3>
+                      Need to withdraw?
+                    </h3>
+
+                    <p>
+                      Submit a withdrawal request
+                      for admin approval.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="tb-primary-button"
+                    onClick={() => {
+                      setWithdrawalMessage("");
+                      setShowWithdrawalModal(true);
                     }}
                   >
-                    <div
-                      style={tableHeader}
-                    >
-                      <span>Symbol</span>
-                      <span>Type</span>
-                      <span>Quantity</span>
-                      <span>Price</span>
-                      <span>Total</span>
-                      <span>Date</span>
-                      <span>Proof</span>
+                    Request Withdrawal
+                  </button>
+
+                </div>
+
+              </section>
+            )}
+
+            {/* =================================================
+                MEMBERS
+            ================================================= */}
+
+            {activeSection === "members" && (
+              <section>
+
+                <div className="tb-page-intro">
+                  <div>
+                    <div className="tb-eyebrow">
+                      COOPERATIVE
                     </div>
 
-                    <div style={tradeList}>
-                      {trades.map(
-                        (trade) => {
-                          const isBuy =
-                            trade.trade_type
-                              .toLowerCase() ===
-                            "buy";
+                    <h2>
+                      Cooperative Members
+                    </h2>
 
-                          const proofCount =
-                            trade.proofPhotos?.length ||
-                            0;
+                    <p>
+                      View the members of your
+                      cooperative.
+                    </p>
+                  </div>
+
+                  <div className="tb-member-count">
+                    <Users size={17} />
+                    {allMembers.length} Members
+                  </div>
+                </div>
+
+                <div className="tb-panel">
+
+                  <div className="tb-panel-header">
+                    <div>
+                      <h3>
+                        Member Directory
+                      </h3>
+
+                      <p>
+                        Names of all active
+                        cooperative members
+                      </p>
+                    </div>
+
+                    <Users size={20} />
+                  </div>
+
+                  {membersLoading ? (
+                    <div className="tb-empty">
+                      Loading members...
+                    </div>
+                  ) : allMembers.length === 0 ? (
+                    <div className="tb-empty">
+                      No members found.
+                    </div>
+                  ) : (
+                    <div className="tb-members-grid">
+                      {allMembers.map(
+                        (item, index) => {
+                          const isCurrent =
+                            item.id === member.id;
 
                           return (
                             <div
-                              key={trade.id}
-                              style={{
-                                ...tradeRow,
-                                gridTemplateColumns:
-                                  "1.1fr 0.9fr 1fr 1.1fr 1.2fr 1.4fr 1fr",
-                              }}
+                              key={item.id}
+                              className={`tb-member-card ${
+                                isCurrent
+                                  ? "tb-member-current"
+                                  : ""
+                              }`}
                             >
-                              <strong>
-                                {trade.symbol}
-                              </strong>
+                              <div className="tb-member-avatar">
+                                {item.full_name
+                                  ?.charAt(0)
+                                  ?.toUpperCase() ||
+                                  "M"}
+                              </div>
 
-                              <span
-                                style={{
-                                  display:
-                                    "inline-flex",
-                                  width:
-                                    "fit-content",
-                                  padding:
-                                    "5px 9px",
-                                  borderRadius:
-                                    "8px",
-                                  background:
-                                    isBuy
-                                      ? "rgba(52,211,153,0.1)"
-                                      : "rgba(248,113,113,0.1)",
-                                  color:
-                                    isBuy
-                                      ? "#34d399"
-                                      : "#f87171",
-                                  fontSize:
-                                    "12px",
-                                  fontWeight:
-                                    600,
-                                  textTransform:
-                                    "capitalize",
-                                }}
-                              >
-                                {
-                                  trade.trade_type
-                                }
-                              </span>
+                              <div className="tb-member-info">
+                                <strong>
+                                  {item.full_name}
+                                </strong>
 
-                              <span>
-                                {Number(
-                                  trade.quantity
-                                ).toLocaleString(
-                                  "en-IN"
-                                )}
-                              </span>
+                                <span>
+                                  {isCurrent
+                                    ? "You"
+                                    : `Member ${
+                                        index + 1
+                                      }`}
+                                </span>
+                              </div>
 
-                              <span>
-                                {formatCurrency(
-                                  Number(
-                                    trade.price
-                                  )
-                                )}
-                              </span>
-
-                              <strong>
-                                {formatCurrency(
-                                  Number(
-                                    trade.total_amount
-                                  )
-                                )}
-                              </strong>
-
-                              <span
-                                style={{
-                                  color:
-                                    "rgba(255,255,255,0.4)",
-                                  fontSize:
-                                    "12px",
-                                }}
-                              >
-                                {new Date(
-                                  trade.trade_date
-                                ).toLocaleString(
-                                  "en-IN"
-                                )}
-                              </span>
-
-                              {proofCount > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    openProofViewer(
-                                      trade
-                                    )
-                                  }
-                                  style={
-                                    proofButton
-                                  }
-                                >
-                                  <ImageIcon
-                                    size={15}
-                                  />
-
-                                  <span>
-                                    View
-                                  </span>
-
-                                  <span
-                                    style={
-                                      proofCountBadge
-                                    }
-                                  >
-                                    {proofCount}
-                                  </span>
-                                </button>
-                              ) : (
-                                <span
-                                  style={
-                                    noProofText
-                                  }
-                                >
-                                  No proof
+                              {isCurrent && (
+                                <span className="tb-you-badge">
+                                  You
                                 </span>
                               )}
                             </div>
@@ -2253,1422 +1922,3658 @@ export default function MemberDashboard() {
                         }
                       )}
                     </div>
-                  </div>
+                  )}
+
                 </div>
-              </>
+
+              </section>
             )}
-          </section>
 
-          {/* =================================================
-              SECURITY NOTICE
-          ================================================= */}
+            {/* =================================================
+                COOPERATIVE
+            ================================================= */}
 
-          <div
-            style={securityNotice}
-            className="tb-mobile-security"
-          >
-            <Lock size={16} />
+            {activeSection === "cooperative" && (
+              <section>
 
-            <span>
-              Your account is read-only.
-              Withdrawal requests require
-              administrator approval.
-            </span>
+                <div className="tb-page-intro">
+                  <div>
+                    <div className="tb-eyebrow">
+                      LEDGER
+                    </div>
+
+                    <h2>
+                      Cooperative Activity
+                    </h2>
+
+                    <p>
+                      View common financial activity
+                      recorded by the cooperative.
+                    </p>
+                  </div>
+
+                  <Activity size={22} />
+                </div>
+
+                <div className="tb-stat-grid">
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <ArrowUpRight size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Deposits
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        cooperativeDeposits
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <ArrowDownRight size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Withdrawals
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        cooperativeWithdrawals
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <MinusCircle size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Others
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        cooperativeOthers
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <Wallet size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Cooperative Balance
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        cooperativeBalance
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="tb-panel">
+
+                  <div className="tb-panel-header">
+                    <div>
+                      <h3>
+                        Activity Ledger
+                      </h3>
+
+                      <p>
+                        Deposits, withdrawals and
+                        other cooperative activity
+                      </p>
+                    </div>
+
+                    <Activity size={20} />
+                  </div>
+
+                  {transactionsLoading ? (
+                    <div className="tb-empty">
+                      Loading cooperative activity...
+                    </div>
+                  ) : transactions.length === 0 ? (
+                    <div className="tb-empty">
+                      No cooperative activity found.
+                    </div>
+                  ) : (
+                    <div className="tb-table-wrap">
+
+                      <table className="tb-table">
+
+                        <thead>
+                          <tr>
+                            <th>Activity</th>
+                            <th>Description</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {transactions.map(
+                            (transaction) => (
+                              <tr key={transaction.id}>
+
+                                <td>
+                                  <div className="tb-table-type">
+                                    {transaction.type ===
+                                    "deposit" ? (
+                                      <ArrowUpRight size={15} />
+                                    ) : (
+                                      <ArrowDownRight size={15} />
+                                    )}
+
+                                    <span>
+                                      {getActivityLabel(
+                                        transaction.type
+                                      )}
+                                    </span>
+                                  </div>
+                                </td>
+
+                                <td>
+                                  {transaction.description ||
+                                    "—"}
+                                </td>
+
+                                <td className="tb-table-amount">
+                                  {formatCurrency(
+                                    transaction.amount
+                                  )}
+                                </td>
+
+                                <td>
+                                  <span
+                                    className={`tb-basic-status ${
+                                      transaction.status ===
+                                      "approved"
+                                        ? "tb-basic-approved"
+                                        : transaction.status ===
+                                            "rejected"
+                                          ? "tb-basic-rejected"
+                                          : "tb-basic-pending"
+                                    }`}
+                                  >
+                                    {transaction.status ||
+                                      "—"}
+                                  </span>
+                                </td>
+
+                                <td>
+                                  {formatDateTime(
+                                    transaction.created_at
+                                  )}
+                                </td>
+
+                              </tr>
+                            )
+                          )}
+                        </tbody>
+
+                      </table>
+
+                    </div>
+                  )}
+
+                </div>
+
+              </section>
+            )}
+
+            {/* =================================================
+                TRADES
+            ================================================= */}
+
+            {activeSection === "trades" && (
+              <section>
+
+                <div className="tb-page-intro">
+
+                  <div>
+                    <div className="tb-eyebrow">
+                      TRADE PORTFOLIO
+                    </div>
+
+                    <h2>
+                      Trades
+                    </h2>
+
+                    <p>
+                      View cooperative trades and
+                      your participation in them.
+                    </p>
+                  </div>
+
+                  <div className="tb-trade-summary">
+                    <TrendingUp size={18} />
+                    {trades.length} Total Trades
+                  </div>
+
+                </div>
+
+                <div className="tb-stat-grid">
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <Clock size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Ongoing
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {ongoingTrades.length}
+                    </div>
+
+                    <div className="tb-stat-foot">
+                      Trades currently ongoing
+                    </div>
+                  </div>
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <CheckCircle2 size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Successful
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {successfulTrades.length}
+                    </div>
+
+                    <div className="tb-stat-foot">
+                      Completed successfully
+                    </div>
+                  </div>
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <XCircle size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Failed
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {failedTrades.length}
+                    </div>
+
+                    <div className="tb-stat-foot">
+                      Invested amount returned
+                    </div>
+                  </div>
+
+                  <div className="tb-stat-card">
+                    <div className="tb-stat-icon">
+                      <CircleDollarSign size={20} />
+                    </div>
+
+                    <div className="tb-stat-label">
+                      Trade Capital
+                    </div>
+
+                    <div className="tb-stat-value">
+                      {formatCurrency(
+                        totalTradeCapital
+                      )}
+                    </div>
+
+                    <div className="tb-stat-foot">
+                      Across recorded trades
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="tb-trades-grid">
+
+                  {tradesLoading ? (
+                    <div className="tb-panel tb-trades-loading">
+                      <div className="tb-spinner" />
+
+                      <h3>
+                        Loading trades...
+                      </h3>
+
+                      <p>
+                        Please wait while trade
+                        information is loaded.
+                      </p>
+                    </div>
+                  ) : trades.length === 0 ? (
+                    <div className="tb-panel tb-empty-large">
+
+                      <div className="tb-empty-large-icon">
+                        <TrendingUp size={28} />
+                      </div>
+
+                      <h3>
+                        No trades yet
+                      </h3>
+
+                      <p>
+                        Trades created by the
+                        cooperative will appear here.
+                      </p>
+
+                    </div>
+                  ) : (
+                    trades.map((trade) => {
+
+                      const contribution =
+                        getTradeContribution(
+                          trade.id
+                        );
+
+                      const files =
+                        getTradeFiles(
+                          trade.id
+                        );
+
+                      const agreementCount =
+                        files.filter(
+                          (file) =>
+                            file.category ===
+                            "agreement"
+                        ).length;
+
+                      const receiptCount =
+                        files.filter(
+                          (file) =>
+                            file.category ===
+                            "receipt"
+                        ).length;
+
+                      return (
+                        <button
+                          key={trade.id}
+                          type="button"
+                          className="tb-trade-card"
+                          onClick={() =>
+                            openTrade(trade)
+                          }
+                        >
+
+                          <div className="tb-trade-card-top">
+
+                            <div className="tb-trade-icon">
+                              <TrendingUp size={21} />
+                            </div>
+
+                            <span
+                              className={getTradeStatusClass(
+                                trade.status
+                              )}
+                            >
+                              {getTradeStatusLabel(
+                                trade.status
+                              )}
+                            </span>
+
+                          </div>
+
+                          <div className="tb-trade-card-name">
+                            {trade.trade_name}
+                          </div>
+
+                          <div className="tb-trade-date">
+                            Trade Date:{" "}
+                            {formatDate(
+                              trade.trade_date
+                            )}
+                          </div>
+
+                          <div className="tb-trade-values">
+
+                            <div>
+                              <span>
+                                Total Trade
+                              </span>
+
+                              <strong>
+                                {formatCurrency(
+                                  trade.invested_amount
+                                )}
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Approx. Return
+                              </span>
+
+                              <strong>
+                                {formatCurrency(
+                                  trade.approx_return
+                                )}
+                              </strong>
+                            </div>
+
+                          </div>
+
+                          <div className="tb-trade-contribution">
+
+                            <div>
+                              <span>
+                                Your Contribution
+                              </span>
+
+                              <strong>
+                                {formatCurrency(
+                                  contribution
+                                )}
+                              </strong>
+                            </div>
+
+                            <ChevronRight size={18} />
+
+                          </div>
+
+                          <div className="tb-trade-card-footer">
+
+                            <span>
+                              <ImageIcon size={14} />
+                              {agreementCount} Agreements
+                            </span>
+
+                            <span>
+                              <ImageIcon size={14} />
+                              {receiptCount} Receipts
+                            </span>
+
+                          </div>
+
+                        </button>
+                      );
+                    })
+                  )}
+
+                </div>
+
+              </section>
+            )}
+
+            {/* =================================================
+                WITHDRAWALS
+            ================================================= */}
+
+            {activeSection === "withdrawals" && (
+              <section>
+
+                <div className="tb-page-intro">
+
+                  <div>
+                    <div className="tb-eyebrow">
+                      ACCOUNT
+                    </div>
+
+                    <h2>
+                      Withdrawals
+                    </h2>
+
+                    <p>
+                      Request withdrawals and track
+                      their status.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="tb-primary-button"
+                    onClick={() => {
+                      setWithdrawalMessage("");
+                      setShowWithdrawalModal(true);
+                    }}
+                  >
+                    <Plus size={17} />
+                    New Request
+                  </button>
+
+                </div>
+
+                <div className="tb-panel">
+
+                  <div className="tb-panel-header">
+
+                    <div>
+                      <h3>
+                        Withdrawal Requests
+                      </h3>
+
+                      <p>
+                        Your submitted withdrawal
+                        requests
+                      </p>
+                    </div>
+
+                    <ArrowDownRight size={20} />
+
+                  </div>
+
+                  {withdrawalsLoading ? (
+                    <div className="tb-empty">
+                      Loading withdrawals...
+                    </div>
+                  ) : withdrawals.length === 0 ? (
+                    <div className="tb-empty-large">
+
+                      <div className="tb-empty-large-icon">
+                        <ArrowDownRight size={28} />
+                      </div>
+
+                      <h3>
+                        No withdrawal requests
+                      </h3>
+
+                      <p>
+                        You have not submitted a
+                        withdrawal request yet.
+                      </p>
+
+                      <button
+                        type="button"
+                        className="tb-primary-button"
+                        onClick={() =>
+                          setShowWithdrawalModal(true)
+                        }
+                      >
+                        Request Withdrawal
+                      </button>
+
+                    </div>
+                  ) : (
+                    <div className="tb-withdrawal-list">
+
+                      {withdrawals.map(
+                        (withdrawal) => (
+                          <div
+                            key={withdrawal.id}
+                            className="tb-withdrawal-row"
+                          >
+
+                            <div className="tb-withdrawal-icon">
+                              <ArrowDownRight size={19} />
+                            </div>
+
+                            <div className="tb-withdrawal-main">
+
+                              <strong>
+                                {formatCurrency(
+                                  withdrawal.amount
+                                )}
+                              </strong>
+
+                              <span>
+                                {withdrawal.method}
+                              </span>
+
+                              <small>
+                                Requested{" "}
+                                {formatDateTime(
+                                  withdrawal.created_at
+                                )}
+                              </small>
+
+                            </div>
+
+                            <div>
+
+                              <span
+                                className={`tb-basic-status ${
+                                  withdrawal.status ===
+                                  "approved"
+                                    ? "tb-basic-approved"
+                                    : withdrawal.status ===
+                                        "rejected"
+                                      ? "tb-basic-rejected"
+                                      : "tb-basic-pending"
+                                }`}
+                              >
+                                {withdrawal.status}
+                              </span>
+
+                            </div>
+
+                          </div>
+                        )
+                      )}
+
+                    </div>
+                  )}
+
+                </div>
+
+              </section>
+            )}
+
+            {/* =================================================
+                ACCOUNT
+            ================================================= */}
+
+            {activeSection === "account" && (
+              <section>
+
+                <div className="tb-page-intro">
+
+                  <div>
+                    <div className="tb-eyebrow">
+                      PROFILE
+                    </div>
+
+                    <h2>
+                      Account
+                    </h2>
+
+                    <p>
+                      Your TradeBishi member account
+                      information.
+                    </p>
+                  </div>
+
+                  <Lock size={22} />
+
+                </div>
+
+                <div className="tb-account-grid">
+
+                  <div className="tb-panel">
+
+                    <div className="tb-panel-header">
+                      <div>
+                        <h3>
+                          Personal Information
+                        </h3>
+
+                        <p>
+                          Basic member details
+                        </p>
+                      </div>
+
+                      <Users size={20} />
+                    </div>
+
+                    <div className="tb-account-list">
+
+                      <div className="tb-account-row">
+                        <span>
+                          Full Name
+                        </span>
+
+                        <strong>
+                          {member.full_name}
+                        </strong>
+                      </div>
+
+                      <div className="tb-account-row">
+                        <span>
+                          Phone
+                        </span>
+
+                        <strong>
+                          {member.phone ||
+                            "Not provided"}
+                        </strong>
+                      </div>
+
+                      <div className="tb-account-row">
+                        <span>
+                          Member Status
+                        </span>
+
+                        <strong>
+                          {member.status}
+                        </strong>
+                      </div>
+
+                      <div className="tb-account-row">
+                        <span>
+                          Member ID
+                        </span>
+
+                        <strong className="tb-account-id">
+                          {member.id}
+                        </strong>
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                  <div className="tb-panel">
+
+                    <div className="tb-panel-header">
+                      <div>
+                        <h3>
+                          Account Summary
+                        </h3>
+
+                        <p>
+                          Your current account figures
+                        </p>
+                      </div>
+
+                      <Wallet size={20} />
+                    </div>
+
+                    <div className="tb-account-list">
+
+                      <div className="tb-account-row">
+                        <span>
+                          Member Balance
+                        </span>
+
+                        <strong>
+                          {formatCurrency(
+                            memberBalance
+                          )}
+                        </strong>
+                      </div>
+
+                      <div className="tb-account-row">
+                        <span>
+                          Member Share
+                        </span>
+
+                        <strong>
+                          {Number(
+                            member.profit_share || 0
+                          )}
+                          %
+                        </strong>
+                      </div>
+
+                      <div className="tb-account-row">
+                        <span>
+                          Active Trades
+                        </span>
+
+                        <strong>
+                          {ongoingTrades.length}
+                        </strong>
+                      </div>
+
+                      <div className="tb-account-row">
+                        <span>
+                          Total Trades
+                        </span>
+
+                        <strong>
+                          {trades.length}
+                        </strong>
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                </div>
+
+                <div className="tb-account-security">
+
+                  <div className="tb-security-icon">
+                    <Lock size={20} />
+                  </div>
+
+                  <div>
+                    <h3>
+                      Account Security
+                    </h3>
+
+                    <p>
+                      Your authentication is managed
+                      securely through TradeBishi's
+                      authentication system.
+                    </p>
+                  </div>
+
+                </div>
+
+                <button
+                  type="button"
+                  className="tb-danger-button"
+                  onClick={handleLogout}
+                >
+                  <LogOut size={17} />
+                  Sign Out
+                </button>
+
+              </section>
+            )}
+
           </div>
-        </div>
+        </main>
 
-        {/* =====================================================
+        {/* =================================================
+            TRADE DETAIL MODAL
+        ================================================= */}
+
+        {showTradeModal &&
+          selectedTrade && (
+            <div className="tb-modal-backdrop">
+
+              <div className="tb-modal tb-trade-modal">
+
+                <div className="tb-modal-header">
+
+                  <div>
+
+                    <span className="tb-modal-eyebrow">
+                      Trade Details
+                    </span>
+
+                    <h2>
+                      {selectedTrade.trade_name}
+                    </h2>
+
+                  </div>
+
+                  <button
+                    type="button"
+                    className="tb-close-button"
+                    onClick={closeTrade}
+                  >
+                    <X size={20} />
+                  </button>
+
+                </div>
+
+                <div className="tb-modal-body">
+
+                  <div className="tb-trade-detail-status">
+
+                    <span
+                      className={getTradeStatusClass(
+                        selectedTrade.status
+                      )}
+                    >
+                      {getTradeStatusLabel(
+                        selectedTrade.status
+                      )}
+                    </span>
+
+                    <span>
+                      {formatDate(
+                        selectedTrade.trade_date
+                      )}
+                    </span>
+
+                  </div>
+
+                  <div className="tb-detail-grid">
+
+                    <div className="tb-detail-card">
+                      <span>
+                        Total Trade Amount
+                      </span>
+
+                      <strong>
+                        {formatCurrency(
+                          selectedTrade.invested_amount
+                        )}
+                      </strong>
+                    </div>
+
+                    <div className="tb-detail-card">
+                      <span>
+                        Approx. Return
+                      </span>
+
+                      <strong>
+                        {formatCurrency(
+                          selectedTrade.approx_return
+                        )}
+                      </strong>
+                    </div>
+
+                    <div className="tb-detail-card tb-detail-highlight">
+                      <span>
+                        Your Contribution
+                      </span>
+
+                      <strong>
+                        {formatCurrency(
+                          getTradeContribution(
+                            selectedTrade.id
+                          )
+                        )}
+                      </strong>
+                    </div>
+
+                  </div>
+
+                  {selectedTrade.status ===
+                    "successful" && (
+                    <div className="tb-info-box">
+
+                      <CheckCircle2 size={19} />
+
+                      <div>
+                        <strong>
+                          Successful Trade
+                        </strong>
+
+                        <p>
+                          The approximate return
+                          shown above represents the
+                          total return amount,
+                          including the original
+                          amount and profit.
+                        </p>
+                      </div>
+
+                    </div>
+                  )}
+
+                  {selectedTrade.status ===
+                    "failed" && (
+                    <div className="tb-warning-box">
+
+                      <XCircle size={19} />
+
+                      <div>
+                        <strong>
+                          Invested Amount Returned
+                        </strong>
+
+                        <p>
+                          This trade was marked
+                          failed. The invested amount
+                          is intended to be returned
+                          to participating members.
+                        </p>
+                      </div>
+
+                    </div>
+                  )}
+
+                  {selectedTrade.status ===
+                    "ongoing" && (
+                    <div className="tb-info-box">
+
+                      <Clock size={19} />
+
+                      <div>
+                        <strong>
+                          Trade Ongoing
+                        </strong>
+
+                        <p>
+                          This trade is currently
+                          active. Final settlement
+                          has not yet been recorded.
+                        </p>
+                      </div>
+
+                    </div>
+                  )}
+
+                  {selectedTrade.notes && (
+                    <div className="tb-detail-section">
+
+                      <div className="tb-detail-section-title">
+                        <h3>
+                          Trade Notes
+                        </h3>
+                      </div>
+
+                      <div className="tb-notes">
+                        {selectedTrade.notes}
+                      </div>
+
+                    </div>
+                  )}
+
+                  <div className="tb-detail-section">
+
+                    <div className="tb-detail-section-title">
+
+                      <div>
+                        <h3>
+                          Documents & Proof
+                        </h3>
+
+                        <p>
+                          Files attached to this trade
+                        </p>
+                      </div>
+
+                      <ImageIcon size={19} />
+
+                    </div>
+
+                    {getTradeFiles(
+                      selectedTrade.id
+                    ).length === 0 ? (
+                      <div className="tb-small-empty">
+                        No documents uploaded for
+                        this trade.
+                      </div>
+                    ) : (
+                      <div className="tb-file-grid">
+
+                        {getTradeFiles(
+                          selectedTrade.id
+                        ).map((file) => (
+                          <button
+                            type="button"
+                            key={file.id}
+                            className="tb-file-card"
+                            onClick={() => {
+                              if (
+                                isImageFile(
+                                  file.file_url
+                                )
+                              ) {
+                                setSelectedImage(
+                                  file.file_url
+                                );
+                              } else {
+                                window.open(
+                                  file.file_url,
+                                  "_blank",
+                                  "noopener,noreferrer"
+                                );
+                              }
+                            }}
+                          >
+
+                            <div className="tb-file-preview">
+
+                              {isImageFile(
+                                file.file_url
+                              ) ? (
+                                <img
+                                  src={file.file_url}
+                                  alt={getFileCategoryLabel(
+                                    file.category
+                                  )}
+                                />
+                              ) : (
+                                <ImageIcon size={28} />
+                              )}
+
+                            </div>
+
+                            <div className="tb-file-info">
+
+                              <strong>
+                                {getFileCategoryLabel(
+                                  file.category
+                                )}
+                              </strong>
+
+                              <span>
+                                {formatDate(
+                                  file.created_at
+                                )}
+                              </span>
+
+                            </div>
+
+                          </button>
+                        ))}
+
+                      </div>
+                    )}
+
+                  </div>
+
+                  <div className="tb-detail-section">
+
+                    <div className="tb-detail-section-title">
+
+                      <div>
+                        <h3>
+                          Trade Activity
+                        </h3>
+
+                        <p>
+                          Updates recorded by the
+                          trade manager
+                        </p>
+                      </div>
+
+                      <Activity size={19} />
+
+                    </div>
+
+                    {getTradeLogs(
+                      selectedTrade.id
+                    ).length === 0 ? (
+                      <div className="tb-small-empty">
+                        No trade updates have been
+                        recorded.
+                      </div>
+                    ) : (
+                      <div className="tb-timeline">
+
+                        {getTradeLogs(
+                          selectedTrade.id
+                        ).map((log) => (
+                          <div
+                            key={log.id}
+                            className="tb-timeline-item"
+                          >
+
+                            <div className="tb-timeline-dot" />
+
+                            <div className="tb-timeline-content">
+
+                              <p>
+                                {log.description}
+                              </p>
+
+                              <span>
+                                {formatDateTime(
+                                  log.created_at
+                                )}
+                              </span>
+
+                            </div>
+
+                          </div>
+                        ))}
+
+                      </div>
+                    )}
+
+                  </div>
+
+                </div>
+
+                <div className="tb-modal-footer">
+
+                  <button
+                    type="button"
+                    className="tb-secondary-button"
+                    onClick={closeTrade}
+                  >
+                    Close
+                  </button>
+
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+        {/* =================================================
             WITHDRAWAL MODAL
-        ===================================================== */}
+        ================================================= */}
 
         {showWithdrawalModal && (
-          <div
-            style={modalOverlay}
-            className="tb-mobile-modal-overlay"
-            onMouseDown={(event) => {
-              if (
-                event.target ===
-                event.currentTarget
-              ) {
-                closeWithdrawalModal();
-              }
-            }}
-          >
-            <div
-              style={modal}
-              className="tb-mobile-modal"
-            >
-              <div style={modalHeader}>
-                <div>
-                  <div
-                    style={modalEyebrow}
-                  >
-                    MEMBER ACTION
-                  </div>
+          <div className="tb-modal-backdrop">
 
-                  <h2
-                    style={modalTitle}
-                    className="tb-mobile-modal-title"
-                  >
+            <div className="tb-modal tb-withdrawal-modal">
+
+              <div className="tb-modal-header">
+
+                <div>
+
+                  <span className="tb-modal-eyebrow">
+                    Member Request
+                  </span>
+
+                  <h2>
                     Request Withdrawal
                   </h2>
 
-                  <p
-                    style={modalSubtitle}
-                  >
-                    Submit a request for
-                    administrator approval.
-                  </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={
-                    closeWithdrawalModal
-                  }
-                  style={closeButton}
-                  aria-label="Close withdrawal modal"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <div
-                style={availableBox}
-              >
-                <span>
-                  Current Investment
-                </span>
-
-                <strong>
-                  {formatCurrency(
-                    Number(
-                      member?.investment_amount ||
-                        0
-                    )
-                  )}
-                </strong>
-              </div>
-
-              <div style={formGroup}>
-                <label style={formLabel}>
-                  Withdrawal Amount
-                </label>
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={
-                    withdrawalAmount
-                  }
-                  onChange={(event) =>
-                    setWithdrawalAmount(
-                      event.target.value
-                    )
-                  }
-                  placeholder="Enter amount"
-                  style={formInput}
-                  inputMode="decimal"
-                />
-              </div>
-
-              <div style={formGroup}>
-                <label style={formLabel}>
-                  Withdrawal Method
-                </label>
-
-                <select
-                  value={
-                    withdrawalMethod
-                  }
-                  onChange={(event) =>
-                    setWithdrawalMethod(
-                      event.target.value
-                    )
-                  }
-                  style={formInput}
-                >
-                  <option value="upi">
-                    UPI
-                  </option>
-
-                  <option value="bank_transfer">
-                    Bank Transfer
-                  </option>
-
-                  <option value="cash">
-                    Cash
-                  </option>
-
-                  <option value="cheque">
-                    Cheque
-                  </option>
-
-                  <option value="other">
-                    Other
-                  </option>
-                </select>
-              </div>
-
-              <div style={formGroup}>
-                <label style={formLabel}>
-                  Payment / Account Details
-                </label>
-
-                <textarea
-                  value={
-                    accountDetails
-                  }
-                  onChange={(event) =>
-                    setAccountDetails(
-                      event.target.value
-                    )
-                  }
-                  placeholder={
-                    withdrawalMethod ===
-                    "upi"
-                      ? "Enter your UPI ID"
-                      : "Enter bank/payment details"
-                  }
-                  style={{
-                    ...formInput,
-                    minHeight: "90px",
-                    resize:
-                      "vertical" as const,
+                  className="tb-close-button"
+                  onClick={() => {
+                    if (!withdrawalSubmitting) {
+                      setShowWithdrawalModal(false);
+                    }
                   }}
-                />
+                >
+                  <X size={20} />
+                </button>
+
               </div>
 
-              <div
-                style={modalNotice}
-              >
-                <Clock size={15} />
+              <div className="tb-modal-body">
 
-                <span>
-                  Your request will remain
-                  pending until an
-                  administrator reviews it.
-                </span>
+                <div className="tb-info-box">
+
+                  <Wallet size={19} />
+
+                  <div>
+                    <strong>
+                      Available Member Balance
+                    </strong>
+
+                    <p>
+                      {formatCurrency(
+                        memberBalance
+                      )}
+                    </p>
+                  </div>
+
+                </div>
+
+                <div className="tb-form-group">
+
+                  <label>
+                    Withdrawal Amount
+                  </label>
+
+                  <div className="tb-input-money">
+
+                    <span>
+                      ₹
+                    </span>
+
+                    <input
+                      type="number"
+                      min="0"
+                      value={withdrawalAmount}
+                      onChange={(event) =>
+                        setWithdrawalAmount(
+                          event.target.value
+                        )
+                      }
+                      placeholder="Enter amount"
+                    />
+
+                  </div>
+
+                </div>
+
+                <div className="tb-form-group">
+
+                  <label>
+                    Withdrawal Method
+                  </label>
+
+                  <select
+                    value={withdrawalMethod}
+                    onChange={(event) =>
+                      setWithdrawalMethod(
+                        event.target.value
+                      )
+                    }
+                  >
+                    <option>
+                      Bank Transfer
+                    </option>
+
+                    <option>
+                      UPI
+                    </option>
+
+                    <option>
+                      Other
+                    </option>
+                  </select>
+
+                </div>
+
+                <div className="tb-form-group">
+
+                  <label>
+                    Account Details
+                  </label>
+
+                  <textarea
+                    value={accountDetails}
+                    onChange={(event) =>
+                      setAccountDetails(
+                        event.target.value
+                      )
+                    }
+                    placeholder={
+                      withdrawalMethod ===
+                      "UPI"
+                        ? "Enter UPI ID"
+                        : "Enter bank/account details"
+                    }
+                    rows={4}
+                  />
+
+                </div>
+
+                {withdrawalMessage && (
+                  <div className="tb-form-message">
+                    {withdrawalMessage}
+                  </div>
+                )}
+
               </div>
 
-              <div
-                style={modalActions}
-                className="tb-mobile-modal-actions"
-              >
+              <div className="tb-modal-footer">
+
                 <button
                   type="button"
-                  onClick={
-                    closeWithdrawalModal
+                  className="tb-secondary-button"
+                  disabled={withdrawalSubmitting}
+                  onClick={() =>
+                    setShowWithdrawalModal(false)
                   }
-                  disabled={
-                    submittingWithdrawal
-                  }
-                  style={cancelButton}
                 >
                   Cancel
                 </button>
 
                 <button
                   type="button"
-                  onClick={
-                    submitWithdrawal
-                  }
-                  disabled={
-                    submittingWithdrawal
-                  }
-                  style={{
-                    ...withdrawButton,
-                    flex: 1,
-                    justifyContent:
-                      "center",
-                    opacity:
-                      submittingWithdrawal
-                        ? 0.6
-                        : 1,
-                  }}
+                  className="tb-primary-button"
+                  disabled={withdrawalSubmitting}
+                  onClick={submitWithdrawal}
                 >
-                  <Wallet size={17} />
-
-                  {submittingWithdrawal
+                  {withdrawalSubmitting
                     ? "Submitting..."
                     : "Submit Request"}
                 </button>
+
               </div>
+
             </div>
+
           </div>
         )}
 
-        {/* =====================================================
-            TRADE PROOF FULLSCREEN VIEWER
-        ===================================================== */}
+        {/* =================================================
+            IMAGE VIEWER
+        ================================================= */}
 
-        {showProofModal &&
-          selectedTrade &&
-          selectedTrade.proofPhotos.length >
-            0 && (
-            <div
-              style={proofOverlay}
-              onMouseDown={(event) => {
-                if (
-                  event.target ===
-                  event.currentTarget
-                ) {
-                  closeProofViewer();
-                }
-              }}
+        {selectedImage && (
+          <div className="tb-image-viewer">
+
+            <button
+              type="button"
+              className="tb-image-close"
+              onClick={() =>
+                setSelectedImage(null)
+              }
             >
-              {/* TOP BAR */}
+              <X size={22} />
+            </button>
 
-              <div
-                style={proofTopBar}
-                className="tb-mobile-proof-top"
-              >
-                <div>
-                  <div
-                    style={{
-                      color:
-                        "rgba(255,255,255,0.4)",
-                      fontSize: "10px",
-                      letterSpacing:
-                        "3px",
-                      textTransform:
-                        "uppercase",
-                    }}
-                  >
-                    Trade Proof
-                  </div>
+            <img
+              src={selectedImage}
+              alt="Trade document"
+            />
 
-                  <strong
-                    style={{
-                      display: "block",
-                      marginTop: "5px",
-                      fontSize: "18px",
-                    }}
-                  >
-                    {selectedTrade.symbol}
-                  </strong>
+          </div>
+        )}
 
-                  <span
-                    style={{
-                      display: "block",
-                      marginTop: "3px",
-                      color:
-                        "rgba(255,255,255,0.4)",
-                      fontSize: "11px",
-                    }}
-                  >
-                    {selectedTrade.trade_type
-                      .toUpperCase()}{" "}
-                    •{" "}
-                    {new Date(
-                      selectedTrade.trade_date
-                    ).toLocaleString(
-                      "en-IN"
-                    )}
-                  </span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={
-                    closeProofViewer
-                  }
-                  style={
-                    proofCloseButton
-                  }
-                  aria-label="Close trade proof"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* IMAGE AREA */}
-
-              <div
-                style={proofImageArea}
-                className="tb-mobile-proof-area"
-              >
-                {selectedTrade.proofPhotos.length >
-                  1 && (
-                  <button
-                    type="button"
-                    onClick={
-                      previousProof
-                    }
-                    style={
-                      proofNavigationButton
-                    }
-                    className="tb-mobile-proof-nav"
-                    aria-label="Previous proof"
-                  >
-                    <ChevronLeft
-                      size={25}
-                    />
-                  </button>
-                )}
-
-                <img
-                  src={
-                    selectedTrade
-                      .proofPhotos[
-                      selectedProofIndex
-                    ]
-                  }
-                  alt={`Trade proof ${
-                    selectedProofIndex + 1
-                  } for ${
-                    selectedTrade.symbol
-                  }`}
-                  style={
-                    proofImage
-                  }
-                  className="tb-mobile-proof-image"
-                />
-
-                {selectedTrade.proofPhotos.length >
-                  1 && (
-                  <button
-                    type="button"
-                    onClick={
-                      nextProof
-                    }
-                    style={
-                      proofNavigationButton
-                    }
-                    className="tb-mobile-proof-nav"
-                    aria-label="Next proof"
-                  >
-                    <ChevronRight
-                      size={25}
-                    />
-                  </button>
-                )}
-              </div>
-
-              {/* BOTTOM INFO */}
-
-              <div
-                style={proofBottomBar}
-                className="tb-mobile-proof-bottom"
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                  }}
-                >
-                  <ImageIcon
-                    size={15}
-                  />
-
-                  <span>
-                    Proof{" "}
-                    {selectedProofIndex +
-                      1}{" "}
-                    of{" "}
-                    {
-                      selectedTrade
-                        .proofPhotos
-                        .length
-                    }
-                  </span>
-                </div>
-
-                {selectedTrade.proofPhotos.length >
-                  1 && (
-                  <div
-                    style={
-                      proofThumbnailRow
-                    }
-                    className="tb-mobile-proof-thumbnails"
-                  >
-                    {selectedTrade.proofPhotos.map(
-                      (
-                        photo,
-                        index
-                      ) => (
-                        <button
-                          key={
-                            `${photo}-${index}`
-                          }
-                          type="button"
-                          onClick={() =>
-                            setSelectedProofIndex(
-                              index
-                            )
-                          }
-                          style={{
-                            ...proofThumbnailButton,
-                            opacity:
-                              index ===
-                              selectedProofIndex
-                                ? 1
-                                : 0.45,
-                          }}
-                        >
-                          <img
-                            src={photo}
-                            alt={`Proof ${
-                              index + 1
-                            }`}
-                            style={
-                              proofThumbnail
-                            }
-                          />
-                        </button>
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-      </main>
+      </div>
     </>
   );
 }
 
 /* =========================================================
-   COMPONENTS
+   PREMIUM DARK THEME
 ========================================================= */
 
-function Stat({
-  icon,
-  title,
-  value,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-}) {
-  return (
-    <div
-      style={statCard}
-      className="tb-mobile-stat-card"
-    >
-      <div
-        style={statLabel}
-        className="tb-mobile-stat-label"
-      >
-        {icon}
-        {title}
-      </div>
+const styles = `
+* {
+  box-sizing: border-box;
+}
 
-      <h2 style={statValue}>
-        {value}
-      </h2>
-    </div>
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* =========================================================
+   APP
+========================================================= */
+
+.tb-app {
+  min-height: 100vh;
+  background: #070a0f;
+  color: #f4f7fb;
+  display: flex;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+/* =========================================================
+   SIDEBAR
+========================================================= */
+
+.tb-sidebar {
+  width: 250px;
+  min-width: 250px;
+  min-height: 100vh;
+  background: #0a0e15;
+  border-right: 1px solid #1b2230;
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 50;
+}
+
+.tb-brand {
+  height: 78px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #171e2a;
+}
+
+.tb-brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(
+      145deg,
+      #2563eb,
+      #4f46e5
+    );
+  color: #ffffff;
+  box-shadow:
+    0 7px 25px rgba(
+      37,
+      99,
+      235,
+      0.28
+    );
+}
+
+.tb-brand-name {
+  color: #f6f8fb;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+}
+
+.tb-brand-subtitle {
+  margin-top: 2px;
+  color: #68758a;
+  font-size: 11px;
+}
+
+.tb-nav {
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+
+.tb-nav-item {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #778398;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.tb-nav-item:hover {
+  background: #111722;
+  border-color: #1c2635;
+  color: #e5ebf4;
+}
+
+.tb-nav-active {
+  background:
+    linear-gradient(
+      135deg,
+      #182744,
+      #121c30
+    );
+  border-color: #253b61;
+  color: #eaf1ff;
+  box-shadow:
+    inset 0 1px 0 rgba(
+      255,
+      255,
+      255,
+      0.035
+    );
+}
+
+.tb-nav-active:hover {
+  background:
+    linear-gradient(
+      135deg,
+      #182744,
+      #121c30
+    );
+  border-color: #2c4670;
+  color: #ffffff;
+}
+
+.tb-nav-count {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #2b65d9;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.tb-sidebar-bottom {
+  padding: 15px;
+  border-top: 1px solid #171e2a;
+}
+
+.tb-user-mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 4px 13px;
+}
+
+.tb-avatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(
+      145deg,
+      #1c2b45,
+      #121b2b
+    );
+  border: 1px solid #2a3b57;
+  color: #9dbbff;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.tb-user-mini-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-user-mini-info strong {
+  color: #e7ecf4;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-user-mini-info span {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #667388;
+}
+
+.tb-logout-button {
+  width: 100%;
+  height: 39px;
+  border: 1px solid #232c3a;
+  background: #0e141e;
+  border-radius: 9px;
+  color: #7d899b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.tb-logout-button:hover {
+  background: #151b26;
+  border-color: #303b4d;
+  color: #e3e8ef;
+}
+
+/* =========================================================
+   MAIN
+========================================================= */
+
+.tb-main {
+  flex: 1;
+  min-width: 0;
+  background: #070a0f;
+}
+
+.tb-header {
+  height: 78px;
+  background: rgba(
+    10,
+    14,
+    21,
+    0.92
+  );
+  border-bottom: 1px solid #1a2230;
+  padding: 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  backdrop-filter: blur(18px);
+}
+
+.tb-header-left {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.tb-header h1 {
+  margin: 0;
+  color: #f4f7fb;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+}
+
+.tb-header p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #6f7b8f;
+}
+
+.tb-header-right {
+  display: flex;
+  align-items: center;
+}
+
+.tb-header-status {
+  height: 32px;
+  border: 1px solid #222c3b;
+  background: #0f151f;
+  border-radius: 999px;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8b98aa;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tb-online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow:
+    0 0 10px rgba(
+      34,
+      197,
+      94,
+      0.6
+    );
+}
+
+.tb-mobile-menu {
+  display: none;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #252f3e;
+  background: #111722;
+  color: #dce4ef;
+  border-radius: 9px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tb-content {
+  padding: 30px;
+  max-width: 1500px;
+  min-height: calc(100vh - 78px);
+  background:
+    radial-gradient(
+      circle at 90% 0%,
+      rgba(
+        37,
+        99,
+        235,
+        0.07
+      ),
+      transparent 30%
+    ),
+    #070a0f;
+}
+
+/* =========================================================
+   EYEBROW
+========================================================= */
+
+.tb-eyebrow {
+  margin-bottom: 7px;
+  color: #668ddd;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+}
+
+/* =========================================================
+   INTRO
+========================================================= */
+
+.tb-page-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.tb-page-intro h2 {
+  margin: 0;
+  color: #f2f5f9;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.tb-page-intro p {
+  margin: 6px 0 0;
+  color: #737f92;
+  font-size: 12px;
+}
+
+.tb-intro-date,
+.tb-member-count,
+.tb-trade-summary {
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid #222b39;
+  background: #0e141e;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8b97a9;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* =========================================================
+   STAT CARDS
+========================================================= */
+
+.tb-stat-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.tb-stat-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      145deg,
+      #101620,
+      #0c1119
+    );
+  border: 1px solid #1d2634;
+  border-radius: 13px;
+  padding: 17px;
+  min-height: 148px;
+  box-shadow:
+    0 12px 40px rgba(
+      0,
+      0,
+      0,
+      0.2
+    );
+}
+
+.tb-stat-card::after {
+  content: "";
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  right: -35px;
+  top: -35px;
+  border-radius: 50%;
+  background: rgba(
+    70,
+    112,
+    210,
+    0.07
+  );
+  pointer-events: none;
+}
+
+.tb-stat-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tb-stat-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #151e2c;
+  color: #7fa8ff;
+  margin-bottom: 13px;
+}
+
+.tb-stat-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #3d6fc9;
+  box-shadow:
+    0 0 10px rgba(
+      61,
+      111,
+      201,
+      0.5
+    );
+}
+
+.tb-stat-label {
+  font-size: 11px;
+  color: #7f8ca0;
+  font-weight: 600;
+}
+
+.tb-stat-value {
+  margin-top: 5px;
+  color: #f5f7fb;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.6px;
+}
+
+.tb-stat-foot {
+  margin-top: 5px;
+  color: #626e80;
+  font-size: 10px;
+}
+
+/* =========================================================
+   PANELS
+========================================================= */
+
+.tb-panel {
+  background: #0d131c;
+  border: 1px solid #1c2634;
+  border-radius: 13px;
+  overflow: hidden;
+  box-shadow:
+    0 12px 40px rgba(
+      0,
+      0,
+      0,
+      0.16
+    );
+}
+
+.tb-panel-header {
+  min-height: 68px;
+  padding: 15px 17px;
+  border-bottom: 1px solid #1b2431;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  color: #78869a;
+}
+
+.tb-panel-header h3 {
+  margin: 0;
+  color: #e9eef5;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tb-panel-header p {
+  margin: 4px 0 0;
+  color: #687589;
+  font-size: 10px;
+}
+
+.tb-panel-link {
+  border: 0;
+  background: transparent;
+  color: #82a9ff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tb-panel-link:hover {
+  color: #aec7ff;
+  text-decoration: underline;
+}
+
+.tb-two-column {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.2fr)
+    minmax(0, 1fr);
+  gap: 18px;
+}
+
+/* =========================================================
+   ACTIVITY
+========================================================= */
+
+.tb-activity-list {
+  padding: 4px 17px;
+}
+
+.tb-activity-row {
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid #1a222e;
+}
+
+.tb-activity-row:last-child {
+  border-bottom: 0;
+}
+
+.tb-activity-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #151c27;
+  color: #7c899c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-activity-positive {
+  background: #10271b;
+  color: #48cf7b;
+}
+
+.tb-activity-negative {
+  background: #291518;
+  color: #ed7272;
+}
+
+.tb-activity-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-activity-main strong {
+  color: #e5ebf2;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tb-activity-main span {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #6e7b8f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-activity-amount {
+  color: #dfe6ef;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/* =========================================================
+   TRADE MINI
+========================================================= */
+
+.tb-trade-mini-list {
+  padding: 4px 12px;
+}
+
+.tb-trade-mini {
+  width: 100%;
+  min-height: 65px;
+  border: 0;
+  border-bottom: 1px solid #1a222e;
+  background: transparent;
+  color: #e7edf5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  padding: 8px 5px;
+}
+
+.tb-trade-mini:last-child {
+  border-bottom: 0;
+}
+
+.tb-trade-mini:hover {
+  background: #121923;
+}
+
+.tb-trade-mini > div:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-trade-mini strong {
+  color: #e6ebf2;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-trade-mini span {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #6d7a8e;
+}
+
+.tb-trade-mini-right {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+.tb-status-ongoing,
+.tb-status-success,
+.tb-status-failed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 25px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.2;
+  font-weight: 800;
+  white-space: normal;
+  text-align: center;
+}
+
+.tb-status-ongoing {
+  background: #2a2110;
+  color: #e5b94e;
+  border: 1px solid #493917;
+}
+
+.tb-status-success {
+  background: #10271b;
+  color: #45cf78;
+  border: 1px solid #1e4a30;
+}
+
+.tb-status-failed {
+  background: #2a1518;
+  color: #ef7777;
+  border: 1px solid #512328;
+}
+
+/* =========================================================
+   ACTION BANNER
+========================================================= */
+
+.tb-action-banner {
+  margin-top: 18px;
+  background:
+    linear-gradient(
+      135deg,
+      #111a28,
+      #0e141e
+    );
+  border: 1px solid #1e2d43;
+  border-radius: 13px;
+  padding: 17px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.tb-action-banner-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #17263c;
+  color: #83aaff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-action-banner-content {
+  flex: 1;
+}
+
+.tb-action-banner-content h3 {
+  margin: 0;
+  color: #e9eff7;
+  font-size: 13px;
+}
+
+.tb-action-banner-content p {
+  margin: 4px 0 0;
+  color: #718096;
+  font-size: 10px;
+}
+
+/* =========================================================
+   BUTTONS
+========================================================= */
+
+.tb-primary-button,
+.tb-secondary-button,
+.tb-danger-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    opacity 0.12s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.tb-primary-button {
+  border: 1px solid #3268d5;
+  background:
+    linear-gradient(
+      135deg,
+      #2563eb,
+      #315fd0
+    );
+  color: #ffffff;
+  box-shadow:
+    0 7px 20px rgba(
+      37,
+      99,
+      235,
+      0.18
+    );
+}
+
+.tb-primary-button:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.tb-secondary-button {
+  border: 1px solid #2a3443;
+  background: #111721;
+  color: #a7b2c2;
+}
+
+.tb-secondary-button:hover {
+  background: #171e29;
+  border-color: #364254;
+  color: #e1e7ef;
+}
+
+.tb-danger-button {
+  border: 1px solid #4a2529;
+  background: #211316;
+  color: #e97979;
+}
+
+.tb-danger-button:hover {
+  background: #2b171a;
+}
+
+.tb-primary-button:disabled,
+.tb-secondary-button:disabled,
+.tb-danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* =========================================================
+   MEMBERS
+========================================================= */
+
+.tb-members-grid {
+  padding: 17px;
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.tb-member-card {
+  min-height: 74px;
+  border: 1px solid #202a38;
+  border-radius: 11px;
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  background: #101620;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.tb-member-card:hover {
+  border-color: #2b3b51;
+  background: #131a25;
+  transform: translateY(-1px);
+}
+
+.tb-member-current {
+  border-color: #315ca5;
+  background:
+    linear-gradient(
+      135deg,
+      #14223a,
+      #101923
+    );
+}
+
+.tb-member-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background:
+    linear-gradient(
+      145deg,
+      #1d304f,
+      #111a29
+    );
+  border: 1px solid #2a4268;
+  color: #8eaff1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tb-member-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-member-info strong {
+  color: #e5ebf2;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-member-info span {
+  margin-top: 3px;
+  color: #6e7b8f;
+  font-size: 9px;
+}
+
+.tb-you-badge {
+  margin-left: auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #1b3157;
+  color: #9bbcff;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+/* =========================================================
+   TABLE
+========================================================= */
+
+.tb-table-wrap {
+  overflow-x: auto;
+}
+
+.tb-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 700px;
+}
+
+.tb-table th {
+  padding: 12px 17px;
+  background: #101620;
+  color: #6f7d91;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tb-table td {
+  padding: 14px 17px;
+  border-top: 1px solid #1a222e;
+  color: #8290a3;
+  font-size: 10px;
+}
+
+.tb-table tbody tr:hover {
+  background: #101720;
+}
+
+.tb-table-amount {
+  font-weight: 800;
+  color: #e1e7ef !important;
+}
+
+.tb-table-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #d9e1eb;
+  font-weight: 800;
+}
+
+.tb-basic-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 23px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.tb-basic-approved {
+  background: #10271b;
+  color: #45c976;
+}
+
+.tb-basic-rejected {
+  background: #2b1518;
+  color: #ed7272;
+}
+
+.tb-basic-pending {
+  background: #2a2110;
+  color: #e3b74e;
+}
+
+/* =========================================================
+   TRADES
+========================================================= */
+
+.tb-trades-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.tb-trade-card {
+  width: 100%;
+  border: 1px solid #202a38;
+  background:
+    linear-gradient(
+      145deg,
+      #101721,
+      #0c121a
+    );
+  border-radius: 13px;
+  padding: 17px;
+  text-align: left;
+  color: #e8edf5;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.tb-trade-card:hover {
+  border-color: #30435d;
+  transform: translateY(-2px);
+  box-shadow:
+    0 14px 35px rgba(
+      0,
+      0,
+      0,
+      0.25
+    );
+}
+
+.tb-trade-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tb-trade-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #172236;
+  color: #7fa7ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-trade-card-name {
+  margin-top: 14px;
+  color: #edf2f8;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.25px;
+}
+
+.tb-trade-date {
+  margin-top: 5px;
+  color: #69778a;
+  font-size: 10px;
+}
+
+.tb-trade-values {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns:
+    1fr 1fr;
+  gap: 10px;
+}
+
+.tb-trade-values > div {
+  padding: 11px;
+  border-radius: 9px;
+  background: #111822;
+  border: 1px solid #1b2634;
+}
+
+.tb-trade-values span,
+.tb-trade-contribution span {
+  display: block;
+  color: #738095;
+  font-size: 9px;
+}
+
+.tb-trade-values strong {
+  display: block;
+  margin-top: 5px;
+  color: #e1e8f1;
+  font-size: 13px;
+}
+
+.tb-trade-contribution {
+  margin-top: 11px;
+  padding: 11px;
+  border: 1px solid #202a38;
+  border-radius: 9px;
+  background: #0e151e;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tb-trade-contribution strong {
+  display: block;
+  margin-top: 4px;
+  color: #eef3f8;
+  font-size: 12px;
+}
+
+.tb-trade-card-footer {
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+  color: #6e7b8d;
+  font-size: 9px;
+}
+
+.tb-trade-card-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* =========================================================
+   EMPTY
+========================================================= */
+
+.tb-empty {
+  padding: 35px 18px;
+  text-align: center;
+  color: #69778a;
+  font-size: 11px;
+}
+
+.tb-empty-large {
+  min-height: 250px;
+  padding: 35px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #0d131c;
+}
+
+.tb-empty-large-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  background: #151e2b;
+  border: 1px solid #253144;
+  color: #71829c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-empty-large h3 {
+  margin: 13px 0 0;
+  color: #e3e9f1;
+  font-size: 14px;
+}
+
+.tb-empty-large p {
+  margin: 5px 0 15px;
+  color: #69768a;
+  font-size: 10px;
+}
+
+.tb-trades-loading {
+  grid-column: 1 / -1;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-trades-loading h3 {
+  margin: 13px 0 0;
+  color: #e4eaf2;
+  font-size: 13px;
+}
+
+.tb-trades-loading p {
+  margin: 5px 0 0;
+  color: #69768a;
+  font-size: 10px;
+}
+
+/* =========================================================
+   WITHDRAWALS
+========================================================= */
+
+.tb-withdrawal-list {
+  padding: 5px 17px;
+}
+
+.tb-withdrawal-row {
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #1b2430;
+}
+
+.tb-withdrawal-row:last-child {
+  border-bottom: 0;
+}
+
+.tb-withdrawal-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #281619;
+  color: #e06e6e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-withdrawal-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-withdrawal-main strong {
+  color: #e6ebf2;
+  font-size: 12px;
+}
+
+.tb-withdrawal-main span {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #778497;
+}
+
+.tb-withdrawal-main small {
+  margin-top: 3px;
+  color: #626f81;
+  font-size: 9px;
+}
+
+/* =========================================================
+   ACCOUNT
+========================================================= */
+
+.tb-account-grid {
+  display: grid;
+  grid-template-columns:
+    1fr 1fr;
+  gap: 17px;
+}
+
+.tb-account-list {
+  padding: 4px 17px;
+}
+
+.tb-account-row {
+  min-height: 58px;
+  border-bottom: 1px solid #1b2430;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.tb-account-row:last-child {
+  border-bottom: 0;
+}
+
+.tb-account-row span {
+  color: #707d91;
+  font-size: 10px;
+}
+
+.tb-account-row strong {
+  color: #dce3ec;
+  font-size: 11px;
+  text-align: right;
+}
+
+.tb-account-id {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tb-account-security {
+  margin-top: 17px;
+  padding: 17px;
+  border: 1px solid #1d2735;
+  background:
+    linear-gradient(
+      135deg,
+      #101721,
+      #0d131c
+    );
+  border-radius: 13px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.tb-security-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #172235;
+  color: #789eea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-account-security h3 {
+  margin: 1px 0 0;
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.tb-account-security p {
+  margin: 5px 0 0;
+  color: #6e7b8e;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.tb-danger-button {
+  margin-top: 15px;
+}
+
+/* =========================================================
+   MODAL
+========================================================= */
+
+.tb-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(
+    0,
+    0,
+    0,
+    0.72
+  );
+  backdrop-filter: blur(7px);
+  z-index: 100;
+  padding: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-modal {
+  width: min(
+    760px,
+    100%
+  );
+  max-height: calc(100vh - 50px);
+  background: #0d131c;
+  border: 1px solid #263142;
+  border-radius: 15px;
+  box-shadow:
+    0 30px 100px rgba(
+      0,
+      0,
+      0,
+      0.55
+    );
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tb-trade-modal {
+  width: min(
+    850px,
+    100%
   );
 }
 
-function SummaryCard({
-  icon,
-  title,
-  value,
-  subtitle,
-  positive = false,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-  subtitle: string;
-  positive?: boolean;
-}) {
-  return (
-    <div
-      style={summaryCard}
-      className="tb-mobile-summary-card"
-    >
-      <div style={statLabel}>
-        {icon}
-        {title}
-      </div>
-
-      <strong
-        style={{
-          display: "block",
-          marginTop: "8px",
-          fontSize: "21px",
-          color: positive
-            ? "#34d399"
-            : "white",
-        }}
-      >
-        {value}
-      </strong>
-
-      <span
-        style={{
-          display: "block",
-          marginTop: "4px",
-          color:
-            "rgba(255,255,255,0.3)",
-          fontSize: "12px",
-        }}
-      >
-        {subtitle}
-      </span>
-    </div>
+.tb-withdrawal-modal {
+  width: min(
+    540px,
+    100%
   );
 }
 
-function AccountItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div
-      style={{
-        padding: "16px",
-        borderRadius: "14px",
-        background:
-          "rgba(255,255,255,0.035)",
-        border:
-          "1px solid rgba(255,255,255,0.06)",
-      }}
-      className="tb-mobile-account-item"
-    >
-      <span
-        style={{
-          display: "block",
-          color:
-            "rgba(255,255,255,0.35)",
-          fontSize: "11px",
-          textTransform:
-            "uppercase",
-          letterSpacing:
-            "0.07em",
-        }}
-      >
-        {label}
-      </span>
-
-      <strong
-        style={{
-          display: "block",
-          marginTop: "6px",
-          fontSize: "14px",
-        }}
-      >
-        {value}
-      </strong>
-    </div>
-  );
+.tb-modal-header {
+  min-height: 75px;
+  padding: 16px 19px;
+  border-bottom: 1px solid #1d2633;
+  background: #101620;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
 }
 
-function WithdrawalStatus({
-  status,
-}: {
-  status: string;
-}) {
-  const normalized =
-    status?.toLowerCase();
+.tb-modal-eyebrow {
+  color: #698ddd;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
 
-  if (normalized === "approved") {
-    return (
-      <span
-        style={{
-          ...statusBadge,
-          color: "#34d399",
-          background:
-            "rgba(52,211,153,0.1)",
-          border:
-            "1px solid rgba(52,211,153,0.18)",
-        }}
-      >
-        <CheckCircle2 size={14} />
-        Approved
-      </span>
+.tb-modal-header h2 {
+  margin: 4px 0 0;
+  color: #f0f4f8;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.tb-close-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #293343;
+  background: #151c27;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #8794a7;
+}
+
+.tb-close-button:hover {
+  background: #1b2431;
+  color: #e8edf4;
+}
+
+.tb-modal-body {
+  padding: 18px;
+  overflow-y: auto;
+}
+
+.tb-modal-footer {
+  min-height: 66px;
+  padding: 12px 18px;
+  border-top: 1px solid #1d2633;
+  background: #0f151e;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+/* =========================================================
+   TRADE DETAILS
+========================================================= */
+
+.tb-trade-detail-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  color: #748195;
+  font-size: 10px;
+}
+
+.tb-detail-grid {
+  margin-top: 15px;
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tb-detail-card {
+  padding: 13px;
+  border: 1px solid #202a38;
+  background: #101721;
+  border-radius: 10px;
+}
+
+.tb-detail-card span {
+  display: block;
+  color: #748196;
+  font-size: 9px;
+}
+
+.tb-detail-card strong {
+  display: block;
+  margin-top: 6px;
+  color: #e3eaf2;
+  font-size: 14px;
+}
+
+.tb-detail-highlight {
+  background: #142038;
+  border-color: #29436e;
+}
+
+.tb-info-box,
+.tb-warning-box {
+  margin-top: 14px;
+  padding: 13px;
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.tb-info-box {
+  background: #10261b;
+  border: 1px solid #1d4630;
+  color: #4dca7a;
+}
+
+.tb-warning-box {
+  background: #291918;
+  border: 1px solid #4b2925;
+  color: #e17b61;
+}
+
+.tb-info-box strong,
+.tb-warning-box strong {
+  display: block;
+  font-size: 11px;
+}
+
+.tb-info-box p,
+.tb-warning-box p {
+  margin: 4px 0 0;
+  font-size: 9px;
+  line-height: 1.5;
+  color: inherit;
+  opacity: 0.82;
+}
+
+.tb-detail-section {
+  margin-top: 20px;
+}
+
+.tb-detail-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+  color: #738095;
+}
+
+.tb-detail-section-title h3 {
+  margin: 0;
+  color: #dfe6ef;
+  font-size: 12px;
+}
+
+.tb-detail-section-title p {
+  margin: 3px 0 0;
+  color: #69768a;
+  font-size: 9px;
+}
+
+.tb-notes {
+  padding: 12px;
+  border: 1px solid #202a38;
+  background: #101721;
+  border-radius: 9px;
+  color: #8a97aa;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.tb-small-empty {
+  padding: 15px;
+  border: 1px dashed #2a3443;
+  border-radius: 9px;
+  color: #6d7a8d;
+  font-size: 10px;
+  text-align: center;
+}
+
+/* =========================================================
+   FILES
+========================================================= */
+
+.tb-file-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tb-file-card {
+  padding: 0;
+  border: 1px solid #222c3a;
+  background: #101721;
+  color: #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tb-file-card:hover {
+  border-color: #34445b;
+}
+
+.tb-file-preview {
+  height: 105px;
+  background: #151c27;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #738198;
+}
+
+.tb-file-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tb-file-info {
+  padding: 9px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-file-info strong {
+  font-size: 9px;
+  color: #dbe3ec;
+}
+
+.tb-file-info span {
+  margin-top: 3px;
+  color: #69768a;
+  font-size: 8px;
+}
+
+/* =========================================================
+   TIMELINE
+========================================================= */
+
+.tb-timeline {
+  border-left: 1px solid #2a3442;
+  margin-left: 8px;
+  padding-left: 18px;
+}
+
+.tb-timeline-item {
+  position: relative;
+  padding-bottom: 17px;
+}
+
+.tb-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.tb-timeline-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6387ca;
+  box-shadow:
+    0 0 8px rgba(
+      99,
+      135,
+      202,
+      0.35
+    );
+  position: absolute;
+  left: -22px;
+  top: 4px;
+}
+
+.tb-timeline-content p {
+  margin: 0;
+  color: #9aa6b7;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.tb-timeline-content span {
+  display: block;
+  margin-top: 4px;
+  color: #5e6b7d;
+  font-size: 8px;
+}
+
+/* =========================================================
+   FORM
+========================================================= */
+
+.tb-form-group {
+  margin-top: 15px;
+}
+
+.tb-form-group label {
+  display: block;
+  margin-bottom: 6px;
+  color: #8490a2;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.tb-form-group input,
+.tb-form-group select,
+.tb-form-group textarea {
+  width: 100%;
+  border: 1px solid #293342;
+  background: #101721;
+  border-radius: 9px;
+  outline: none;
+  color: #e3eaf2;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.tb-form-group input::placeholder,
+.tb-form-group textarea::placeholder {
+  color: #566376;
+}
+
+.tb-form-group input,
+.tb-form-group select {
+  height: 40px;
+  padding: 0 11px;
+}
+
+.tb-form-group textarea {
+  padding: 10px 11px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.tb-form-group input:focus,
+.tb-form-group select:focus,
+.tb-form-group textarea:focus {
+  border-color: #3b68ad;
+  box-shadow:
+    0 0 0 3px rgba(
+      59,
+      104,
+      173,
+      0.12
+    );
+}
+
+.tb-input-money {
+  display: flex;
+  align-items: center;
+  border: 1px solid #293342;
+  background: #101721;
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.tb-input-money > span {
+  height: 40px;
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #151d29;
+  color: #8794a7;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tb-input-money input {
+  border: 0;
+  border-radius: 0;
+}
+
+.tb-form-message {
+  margin-top: 12px;
+  padding: 10px 11px;
+  border-radius: 8px;
+  background: #151d28;
+  border: 1px solid #273344;
+  color: #8c99ab;
+  font-size: 10px;
+}
+
+/* =========================================================
+   IMAGE VIEWER
+========================================================= */
+
+.tb-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(
+    0,
+    0,
+    0,
+    0.9
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+}
+
+.tb-image-viewer img {
+  max-width: 100%;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow:
+    0 25px 80px rgba(
+      0,
+      0,
+      0,
+      0.5
+    );
+}
+
+.tb-image-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(
+    255,
+    255,
+    255,
+    0.18
+  );
+  background: rgba(
+    255,
+    255,
+    255,
+    0.08
+  );
+  color: #ffffff;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* =========================================================
+   LOADING / ERROR
+========================================================= */
+
+.tb-loading-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at center,
+      #111b2b,
+      #070a0f 55%
+    );
+  color: #f4f7fb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+
+.tb-loading-card,
+.tb-error-card {
+  width: min(
+    390px,
+    100%
+  );
+  background: #0d131c;
+  border: 1px solid #222d3d;
+  border-radius: 15px;
+  padding: 30px;
+  text-align: center;
+  box-shadow:
+    0 25px 70px rgba(
+      0,
+      0,
+      0,
+      0.35
+    );
+}
+
+.tb-logo-glow {
+  width: 50px;
+  height: 50px;
+  margin: 0 auto;
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      145deg,
+      #2563eb,
+      #4f46e5
+    );
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 10px 35px rgba(
+      37,
+      99,
+      235,
+      0.25
+    );
+}
+
+.tb-loading-card h2,
+.tb-error-card h2 {
+  margin: 16px 0 0;
+  color: #edf2f8;
+  font-size: 17px;
+}
+
+.tb-loading-card p,
+.tb-error-card p {
+  margin: 7px 0 0;
+  color: #6e7b8e;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.tb-error-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto;
+  border-radius: 14px;
+  background: #291518;
+  border: 1px solid #4b2529;
+  color: #e46f6f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tb-error-card .tb-primary-button {
+  margin-top: 20px;
+  width: 100%;
+}
+
+.tb-error-card .tb-secondary-button {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.tb-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid #273142;
+  border-top-color: #5f8fe9;
+  animation: tb-spin 0.8s linear infinite;
+  margin: 18px auto 0;
+}
+
+@keyframes tb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* =========================================================
+   MOBILE OVERLAY
+========================================================= */
+
+.tb-mobile-overlay {
+  display: none;
+}
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 1150px) {
+  .tb-stat-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .tb-members-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .tb-sidebar {
+    position: fixed;
+    left: -270px;
+    top: 0;
+    bottom: 0;
+    transition: left 0.2s ease;
+    box-shadow:
+      12px 0 40px rgba(
+        0,
+        0,
+        0,
+        0.35
+      );
+  }
+
+  .tb-sidebar-open {
+    left: 0;
+  }
+
+  .tb-mobile-menu {
+    display: flex;
+  }
+
+  .tb-mobile-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    background: rgba(
+      0,
+      0,
+      0,
+      0.55
+    );
+    z-index: 40;
+  }
+
+  .tb-two-column,
+  .tb-account-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+  .tb-trades-grid {
+    grid-template-columns:
+      1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .tb-header {
+    height: 68px;
+    padding: 0 15px;
+  }
+
+  .tb-header h1 {
+    font-size: 17px;
+  }
+
+  .tb-header-right {
+    display: none;
+  }
+
+  .tb-content {
+    padding: 18px 13px 30px;
+  }
+
+  .tb-page-intro {
+    align-items: flex-start;
+  }
+
+  .tb-page-intro h2 {
+    font-size: 19px;
+  }
+
+  .tb-stat-grid {
+    grid-template-columns:
+      1fr 1fr;
+    gap: 9px;
+  }
+
+  .tb-stat-card {
+    min-height: 130px;
+    padding: 13px;
+  }
+
+  .tb-stat-value {
+    font-size: 17px;
+  }
+
+  .tb-stat-icon {
+    width: 32px;
+    height: 32px;
+    margin-bottom: 9px;
+  }
+
+  .tb-members-grid {
+    grid-template-columns:
+      1fr;
+    padding: 12px;
+  }
+
+  .tb-action-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .tb-action-banner-content {
+    min-width: calc(
+      100% - 55px
     );
   }
 
-  if (normalized === "rejected") {
-    return (
-      <span
-        style={{
-          ...statusBadge,
-          color: "#f87171",
-          background:
-            "rgba(248,113,113,0.1)",
-          border:
-            "1px solid rgba(248,113,113,0.18)",
-        }}
-      >
-        <XCircle size={14} />
-        Rejected
-      </span>
-    );
+  .tb-action-banner .tb-primary-button {
+    width: 100%;
   }
 
-  return (
-    <span
-      style={{
-        ...statusBadge,
-        color: "#facc15",
-        background:
-          "rgba(250,204,21,0.1)",
-        border:
-          "1px solid rgba(250,204,21,0.18)",
-      }}
-    >
-      <Clock size={14} />
-      Pending
-    </span>
-  );
+  .tb-detail-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+  .tb-file-grid {
+    grid-template-columns:
+      1fr 1fr;
+  }
+
+  .tb-modal-backdrop {
+    padding: 10px;
+  }
+
+  .tb-modal {
+    max-height: calc(
+      100vh - 20px
+    );
+    border-radius: 12px;
+  }
+
+  .tb-modal-header {
+    padding: 13px;
+  }
+
+  .tb-modal-body {
+    padding: 13px;
+  }
+
+  .tb-modal-footer {
+    padding: 10px 13px;
+  }
+
+  .tb-trade-values {
+    grid-template-columns:
+      1fr;
+  }
+
+  .tb-withdrawal-row {
+    align-items: flex-start;
+    padding: 13px 0;
+  }
 }
 
-/* =========================================================
-   GENERAL STYLES
-========================================================= */
-
-const pageStyle = {
-  minHeight: "100vh",
-  background:
-    "radial-gradient(circle at top, #151515 0%, #050505 45%)",
-  color: "white",
-  padding: "30px",
-};
-
-const containerStyle = {
-  maxWidth: "1250px",
-  margin: "0 auto",
-};
-
-const headerStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  marginBottom: "35px",
-  gap: "20px",
-};
-
-const eyebrowStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "9px",
-  color:
-    "rgba(255,255,255,0.45)",
-  fontSize: "12px",
-  letterSpacing: "3px",
-  textTransform:
-    "uppercase" as const,
-};
-
-const titleStyle = {
-  fontSize: "40px",
-  margin: "10px 0 0",
-  letterSpacing: "-1.8px",
-};
-
-const subtitleStyle = {
-  color:
-    "rgba(255,255,255,0.45)",
-  marginTop: "7px",
-  fontSize: "14px",
-};
-
-const statsGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(4, minmax(0, 1fr))",
-  gap: "15px",
-  marginBottom: "15px",
-};
-
-const summaryGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(3, minmax(0, 1fr))",
-  gap: "15px",
-  marginBottom: "25px",
-};
-
-const statCard = {
-  padding: "21px",
-  borderRadius: "20px",
-  background:
-    "rgba(255,255,255,0.05)",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-};
-
-const statLabel = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "12px",
-};
-
-const statValue = {
-  marginTop: "9px",
-  fontSize: "24px",
-  letterSpacing: "-0.5px",
-};
-
-const summaryCard = {
-  padding: "20px",
-  borderRadius: "18px",
-  background:
-    "rgba(255,255,255,0.035)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-};
-
-const sectionStyle = {
-  background:
-    "rgba(255,255,255,0.05)",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  borderRadius: "26px",
-  padding: "28px",
-  backdropFilter: "blur(20px)",
-  marginBottom: "20px",
-};
-
-const sectionHeaderStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  marginBottom: "25px",
-  gap: "15px",
-};
-
-const sectionTitle = {
-  fontSize: "23px",
-  fontWeight: 600,
-  margin: 0,
-};
-
-const sectionSubtitle = {
-  marginTop: "5px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "13px",
-};
-
-const accountGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(4, minmax(0, 1fr))",
-  gap: "12px",
-};
-
-const tableHeader = {
-  display: "grid",
-  gridTemplateColumns:
-    "1.1fr 0.9fr 1fr 1.1fr 1.2fr 1.4fr 1fr",
-  gap: "15px",
-  padding: "0 17px 11px",
-  color:
-    "rgba(255,255,255,0.35)",
-  fontSize: "11px",
-  textTransform:
-    "uppercase" as const,
-  letterSpacing: "0.07em",
-};
-
-const tradeList = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap: "9px",
-};
-
-const tradeRow = {
-  display: "grid",
-  gap: "15px",
-  alignItems: "center",
-  padding: "17px",
-  borderRadius: "15px",
-  background:
-    "rgba(0,0,0,0.25)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-};
-
-const emptyState = {
-  padding: "50px 20px",
-  textAlign:
-    "center" as const,
-  color:
-    "rgba(255,255,255,0.4)",
-  background:
-    "rgba(0,0,0,0.2)",
-  borderRadius: "18px",
-  border:
-    "1px solid rgba(255,255,255,0.05)",
-};
-
-const securityNotice = {
-  marginTop: "20px",
-  padding: "15px 18px",
-  borderRadius: "15px",
-  background:
-    "rgba(255,255,255,0.03)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "13px",
-};
-
-const primaryButton = {
-  marginTop: "20px",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "11px 17px",
-  borderRadius: "13px",
-  border: "none",
-  background: "white",
-  color: "black",
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
-const logoutButton = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "11px 16px",
-  borderRadius: "13px",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  background:
-    "rgba(255,255,255,0.05)",
-  color: "white",
-  cursor: "pointer",
-};
-
-const withdrawalSection = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "20px",
-  marginBottom: "20px",
-  padding: "23px 25px",
-  borderRadius: "22px",
-  background:
-    "rgba(255,255,255,0.045)",
-  border:
-    "1px solid rgba(255,255,255,0.09)",
-};
-
-const withdrawalTitleRow = {
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-};
-
-const withdrawalTitle = {
-  margin: 0,
-  fontSize: "19px",
-};
-
-const withdrawalSubtitle = {
-  marginTop: "6px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "12px",
-};
-
-const pendingNotice = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "7px",
-  marginTop: "10px",
-  padding: "7px 10px",
-  borderRadius: "9px",
-  background:
-    "rgba(250,204,21,0.08)",
-  border:
-    "1px solid rgba(250,204,21,0.15)",
-  color: "#facc15",
-  fontSize: "11px",
-};
-
-const withdrawButton = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "12px 17px",
-  borderRadius: "13px",
-  border:
-    "1px solid rgba(255,255,255,0.14)",
-  background: "white",
-  color: "black",
-  cursor: "pointer",
-  fontWeight: 700,
-  whiteSpace:
-    "nowrap" as const,
-};
-
-const withdrawalList = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap: "9px",
-};
-
-const withdrawalRow = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: "20px",
-  padding: "17px",
-  borderRadius: "15px",
-  background:
-    "rgba(0,0,0,0.25)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-};
-
-const statusBadge = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "6px",
-  padding: "6px 10px",
-  borderRadius: "999px",
-  fontSize: "11px",
-  fontWeight: 600,
-};
-
-const errorBox = {
-  marginBottom: "18px",
-  padding: "14px 16px",
-  borderRadius: "13px",
-  background:
-    "rgba(248,113,113,0.08)",
-  border:
-    "1px solid rgba(248,113,113,0.2)",
-  color: "#f87171",
-};
-
-const loadingStyle = {
-  minHeight: "100vh",
-  background: "#050505",
-  color: "white",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "20px",
-};
-
-/* =========================================================
-   PROOF STYLES
-========================================================= */
-
-const proofButton = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "6px",
-  width: "fit-content",
-  padding: "8px 11px",
-  borderRadius: "10px",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  background:
-    "rgba(255,255,255,0.06)",
-  color: "white",
-  cursor: "pointer",
-  fontSize: "11px",
-  fontWeight: 600,
-};
-
-const proofCountBadge = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  minWidth: "18px",
-  height: "18px",
-  padding: "0 4px",
-  borderRadius: "999px",
-  background:
-    "rgba(255,255,255,0.12)",
-  fontSize: "9px",
-};
-
-const noProofText = {
-  color:
-    "rgba(255,255,255,0.25)",
-  fontSize: "11px",
-};
-
-const proofOverlay = {
-  position: "fixed" as const,
-  inset: 0,
-  zIndex: 10000,
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  background:
-    "rgba(0,0,0,0.94)",
-  backdropFilter: "blur(18px)",
-};
-
-const proofTopBar = {
-  display: "flex",
-  alignItems: "flex-start",
-  justifyContent: "space-between",
-  gap: "20px",
-  padding: "22px 25px",
-  borderBottom:
-    "1px solid rgba(255,255,255,0.08)",
-};
-
-const proofCloseButton = {
-  width: "40px",
-  height: "40px",
-  flexShrink: 0,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  borderRadius: "50%",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  background:
-    "rgba(255,255,255,0.06)",
-  color: "white",
-  cursor: "pointer",
-};
-
-const proofImageArea = {
-  flex: 1,
-  minHeight: 0,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: "20px",
-  padding: "25px",
-};
-
-const proofImage = {
-  maxWidth: "calc(100vw - 180px)",
-  maxHeight: "calc(100vh - 220px)",
-  objectFit: "contain" as const,
-  borderRadius: "16px",
-  boxShadow:
-    "0 30px 100px rgba(0,0,0,0.7)",
-  userSelect: "none" as const,
-};
-
-const proofNavigationButton = {
-  width: "48px",
-  height: "48px",
-  flexShrink: 0,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  borderRadius: "50%",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  background:
-    "rgba(255,255,255,0.08)",
-  color: "white",
-  cursor: "pointer",
-};
-
-const proofBottomBar = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: "20px",
-  padding: "15px 25px",
-  borderTop:
-    "1px solid rgba(255,255,255,0.08)",
-  color:
-    "rgba(255,255,255,0.45)",
-  fontSize: "11px",
-};
-
-const proofThumbnailRow = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-  overflowX: "auto" as const,
-};
-
-const proofThumbnailButton = {
-  width: "48px",
-  height: "38px",
-  padding: "0",
-  borderRadius: "7px",
-  overflow: "hidden" as const,
-  border:
-    "1px solid rgba(255,255,255,0.15)",
-  background: "black",
-  cursor: "pointer",
-};
-
-const proofThumbnail = {
-  width: "100%",
-  height: "100%",
-  objectFit: "cover" as const,
-};
-
-/* =========================================================
-   PORTFOLIO STYLES
-========================================================= */
-
-const portfolioSection = {
-  marginBottom: "20px",
-  padding: "28px",
-  borderRadius: "26px",
-  background:
-    "linear-gradient(145deg, rgba(255,255,255,0.065), rgba(255,255,255,0.035))",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  backdropFilter: "blur(20px)",
-  overflow: "hidden",
-};
-
-const portfolioHeader = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: "20px",
-  marginBottom: "22px",
-};
-
-const portfolioEyebrow = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-  color:
-    "rgba(255,255,255,0.35)",
-  fontSize: "10px",
-  letterSpacing: "3px",
-  fontWeight: 600,
-};
-
-const portfolioTitle = {
-  margin: "8px 0 0",
-  fontSize: "25px",
-  letterSpacing: "-0.7px",
-};
-
-const portfolioSubtitle = {
-  marginTop: "6px",
-  color:
-    "rgba(255,255,255,0.38)",
-  fontSize: "12px",
-};
-
-const performanceSummaryGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(3, minmax(0, 1fr))",
-  gap: "10px",
-  marginBottom: "18px",
-};
-
-const performanceMiniCard = {
-  padding: "15px",
-  borderRadius: "15px",
-  background:
-    "rgba(0,0,0,0.2)",
-  border:
-    "1px solid rgba(255,255,255,0.06)",
-};
-
-const miniLabel = {
-  display: "block",
-  color:
-    "rgba(255,255,255,0.32)",
-  fontSize: "10px",
-  textTransform:
-    "uppercase" as const,
-  letterSpacing: "0.07em",
-};
-
-const miniValue = {
-  display: "block",
-  marginTop: "6px",
-  fontSize: "17px",
-};
-
-const chartContainer = {
-  width: "100%",
-  padding: "10px 0 0",
-  borderRadius: "18px",
-  background:
-    "rgba(0,0,0,0.15)",
-};
-
-const performanceDisclaimer = {
-  display: "flex",
-  alignItems: "flex-start",
-  gap: "7px",
-  marginTop: "13px",
-  padding: "11px 13px",
-  borderRadius: "11px",
-  background:
-    "rgba(255,255,255,0.025)",
-  border:
-    "1px solid rgba(255,255,255,0.05)",
-  color:
-    "rgba(255,255,255,0.3)",
-  fontSize: "10px",
-  lineHeight: 1.5,
-};
-
-/* =========================================================
-   MODAL STYLES
-========================================================= */
-
-const modalOverlay = {
-  position: "fixed" as const,
-  inset: 0,
-  zIndex: 9999,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  padding: "20px",
-  background:
-    "rgba(0,0,0,0.78)",
-  backdropFilter: "blur(14px)",
-};
-
-const modal = {
-  width: "100%",
-  maxWidth: "540px",
-  maxHeight: "90vh",
-  overflowY: "auto" as const,
-  padding: "28px",
-  borderRadius: "25px",
-  background: "#111",
-  border:
-    "1px solid rgba(255,255,255,0.12)",
-  boxShadow:
-    "0 30px 100px rgba(0,0,0,0.6)",
-};
-
-const modalHeader = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: "20px",
-  marginBottom: "22px",
-};
-
-const modalEyebrow = {
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "10px",
-  letterSpacing: "3px",
-  fontWeight: 600,
-};
-
-const modalTitle = {
-  marginTop: "8px",
-  fontSize: "25px",
-};
-
-const modalSubtitle = {
-  marginTop: "6px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "13px",
-};
-
-const closeButton = {
-  width: "36px",
-  height: "36px",
-  borderRadius: "50%",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  background:
-    "rgba(255,255,255,0.06)",
-  color: "white",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const availableBox = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  padding: "14px",
-  marginBottom: "20px",
-  borderRadius: "13px",
-  background:
-    "rgba(255,255,255,0.04)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-};
-
-const formGroup = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap: "8px",
-  marginBottom: "16px",
-};
-
-const formLabel = {
-  color:
-    "rgba(255,255,255,0.65)",
-  fontSize: "12px",
-  fontWeight: 600,
-};
-
-const formInput = {
-  width: "100%",
-  boxSizing:
-    "border-box" as const,
-  padding: "13px 14px",
-  borderRadius: "12px",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  background:
-    "rgba(255,255,255,0.05)",
-  color: "white",
-  outline: "none",
-  fontSize: "14px",
-};
-
-const modalNotice = {
-  display: "flex",
-  alignItems: "flex-start",
-  gap: "8px",
-  padding: "12px",
-  borderRadius: "12px",
-  background:
-    "rgba(255,255,255,0.04)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "11px",
-  lineHeight: 1.5,
-};
-
-const modalActions = {
-  display: "flex",
-  gap: "10px",
-  marginTop: "20px",
-};
-
-const cancelButton = {
-  padding: "13px 18px",
-  borderRadius: "13px",
-  border:
-    "1px solid rgba(255,255,255,0.1)",
-  background:
-    "rgba(255,255,255,0.05)",
-  color: "white",
-  cursor: "pointer",
-};
+@media (max-width: 430px) {
+  .tb-stat-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+  .tb-file-grid {
+    grid-template-columns:
+      1fr;
+  }
+
+  .tb-trade-card {
+    padding: 14px;
+  }
+
+  .tb-header-left > div:last-child p {
+    display: none;
+  }
+
+  .tb-page-intro {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tb-intro-date,
+  .tb-member-count,
+  .tb-trade-summary {
+    align-self: flex-start;
+  }
+}
+`;

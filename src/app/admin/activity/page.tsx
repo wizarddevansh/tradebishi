@@ -284,7 +284,7 @@ export default function AdminActivityPage() {
       type !== "expense"
     ) {
       setError(
-        "Cooperative activity must be an expense."
+        "Cooperative activity must be an Others activity."
       );
       return;
     }
@@ -443,7 +443,7 @@ export default function AdminActivityPage() {
     }
 
     if (value === "expense") {
-      return "Expense";
+      return "Others";
     }
 
     return value;
@@ -521,6 +521,11 @@ export default function AdminActivityPage() {
               .toLowerCase()
               .includes(query) ||
             transaction.type
+              .toLowerCase()
+              .includes(query) ||
+            displayType(
+              transaction.type
+            )
               .toLowerCase()
               .includes(query);
 
@@ -602,7 +607,7 @@ export default function AdminActivityPage() {
             <p style={subtitleStyle}>
               Monitor and manage every
               member transaction and
-              cooperative expense.
+              cooperative activity.
             </p>
           </div>
 
@@ -699,7 +704,7 @@ export default function AdminActivityPage() {
           />
 
           <SummaryCard
-            title="Cooperative Expenses"
+            title="Cooperative Others"
             value={currency(
               expenseTotal
             )}
@@ -742,7 +747,7 @@ export default function AdminActivityPage() {
 
               <p style={sectionSubtitle}>
                 Every deposit, withdrawal
-                and cooperative expense
+                and cooperative activity
                 recorded in TradeBishi.
               </p>
             </div>
@@ -818,7 +823,7 @@ export default function AdminActivityPage() {
                 </option>
 
                 <option value="expense">
-                  Expenses
+                  Others
                 </option>
               </select>
             </div>
@@ -960,7 +965,7 @@ export default function AdminActivityPage() {
                       >
                         {transaction.member_id
                           ? "Member transaction"
-                          : "Cooperative"}
+                          : "Cooperative activity"}
                       </p>
                     </div>
 
@@ -1111,8 +1116,8 @@ export default function AdminActivityPage() {
                   }
                 >
                   {editing
-                    ? "Update the selected transaction."
-                    : "Record a member transaction or cooperative expense."}
+                    ? "Update the selected activity."
+                    : "Record a member transaction or cooperative activity."}
                 </p>
               </div>
 
@@ -1133,7 +1138,9 @@ export default function AdminActivityPage() {
 
             <div style={formGroup}>
               <label
-                style={formLabel}
+                style={
+                  formLabel
+                }
               >
                 Activity Source
               </label>
@@ -1212,7 +1219,7 @@ export default function AdminActivityPage() {
                   </span>
 
                   <span>
-                    Cooperative Expense
+                    Cooperative Activity
                   </span>
                 </button>
               </div>
@@ -1319,7 +1326,7 @@ export default function AdminActivityPage() {
                   </>
                 ) : (
                   <option value="expense">
-                    Expense
+                    Others
                   </option>
                 )}
               </select>
@@ -1399,7 +1406,7 @@ export default function AdminActivityPage() {
                 placeholder={
                   source ===
                   "cooperative"
-                    ? "e.g. Office electricity"
+                    ? "e.g. Office electricity or other cooperative activity"
                     : "e.g. Monthly contribution"
                 }
                 style={
@@ -1462,7 +1469,7 @@ export default function AdminActivityPage() {
 
                 <span>
                   This will be recorded as
-                  a cooperative expense with
+                  a cooperative activity with
                   <strong>
                     {" "}
                     no member attached
@@ -1765,7 +1772,7 @@ function TypeBadge({
           size={12}
         />
       ),
-      label: "Expense",
+      label: "Others",
     },
   };
 

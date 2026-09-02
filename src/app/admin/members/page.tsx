@@ -260,7 +260,7 @@ export default function AdminMembersPage() {
       investmentAmount < 0
     ) {
       setError(
-        "Investment amount must be 0 or greater."
+        "Starting balance must be 0 or greater."
       );
       setSaving(false);
       return;
@@ -442,7 +442,7 @@ export default function AdminMembersPage() {
       );
     });
 
-  const totalInvestment =
+  const totalBalance =
     members.reduce(
       (sum, member) =>
         sum +
@@ -498,8 +498,7 @@ export default function AdminMembersPage() {
 
             <p style={subtitleStyle}>
               Manage every registered
-              investment member from one
-              place.
+              member from one place.
             </p>
           </div>
 
@@ -563,9 +562,9 @@ export default function AdminMembersPage() {
           />
 
           <StatCard
-            title="Total Investment"
+            title="Total Member Balance"
             value={currency(
-              totalInvestment
+              totalBalance
             )}
             icon={<Wallet size={20} />}
           />
@@ -737,7 +736,7 @@ export default function AdminMembersPage() {
                               columnLabel
                             }
                           >
-                            INVESTMENT
+                            BALANCE
                           </p>
 
                           <strong>
@@ -944,7 +943,7 @@ export default function AdminMembersPage() {
             />
 
             <DetailRow
-              label="balance"
+              label="Balance"
               value={currency(
                 selectedMember.investment_amount
               )}
@@ -1067,7 +1066,7 @@ export default function AdminMembersPage() {
                 >
                   {editingMember
                     ? "Update the member's information or login credentials."
-                    : "Create the member's investment record and login account."}
+                    : "Create the member's balance record and login account."}
                 </p>
               </div>
 
@@ -1148,11 +1147,7 @@ export default function AdminMembersPage() {
               <input
                 required={!editingMember}
                 type="password"
-                autoComplete={
-                  editingMember
-                    ? "new-password"
-                    : "new-password"
-                }
+                autoComplete="new-password"
                 value={form.password}
                 onChange={(event) =>
                   setForm({
@@ -1187,7 +1182,7 @@ export default function AdminMembersPage() {
               />
 
               <label style={labelStyle}>
-                Investment Amount
+                Starting Balance
               </label>
 
               <input
