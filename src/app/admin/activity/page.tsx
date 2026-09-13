@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Activity,
   Plus,
@@ -21,13 +20,20 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
+type TransactionType =
+  | "deposit"
+  | "withdrawal"
+  | "expense"
+  | "trade_return"
+  | "service_fee";
+
 type Transaction = {
   id: string;
   member_id: string | null;
-  type: string;
+  type: TransactionType;
   amount: number;
   description: string | null;
-  status: string;
+  status: "completed" | "pending" | "cancelled";
   created_at: string;
 };
 
@@ -39,162 +45,133 @@ type Member = {
 type ActivityType =
   | "deposit"
   | "withdrawal"
-  | "expense";
+  | "expense"
+  | "service_fee";
 
-type ActivitySource =
-  | "member"
-  | "cooperative";
+type ActivitySource = "member" | "cooperative";
 
 export default function AdminActivityPage() {
-  const router = useRouter();
+  const supabase = createClient();
 
-  const [transactions, setTransactions] = useState<
-    Transaction[]
-  >([]);
-
-  const [members, setMembers] = useState<Member[]>(
-    []
-  );
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const [error, setError] = useState("");
 
   const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] =
-    useState<Transaction | null>(null);
+  const [editing, setEditing] = useState<Transaction | null>(null);
 
-  const [source, setSource] =
-    useState<ActivitySource>("member");
-
+  const [source, setSource] = useState<ActivitySource>("member");
   const [memberId, setMemberId] = useState("");
-
-  const [type, setType] =
-    useState<ActivityType>("deposit");
-
+  const [type, setType] = useState<ActivityType>("deposit");
   const [amount, setAmount] = useState("");
-  const [description, setDescription] =
-    useState("");
-
-  const [status, setStatus] =
-    useState("completed");
+  const [description, setDescription] = useState("");
+  const [status, setStatus] = useState<
+    "completed" | "pending" | "cancelled"
+  >("completed");
 
   const [search, setSearch] = useState("");
-  const [filterType, setFilterType] =
-    useState<"all" | ActivityType>("all");
+  const [filterType, setFilterType] = useState<
+    "all" | ActivityType
+  >("all");
+  const [filterStatus, setFilterStatus] = useState<
+    "all" | "completed" | "pending" | "cancelled"
+  >("all");
 
-  const [filterStatus, setFilterStatus] =
-    useState<
-      "all" | "completed" | "pending" | "cancelled"
-    >("all");
-
-  useEffect(() => {
-    loadActivity();
-  }, []);
+  /* ---------------------------------------------------------
+     ADMIN AUTH
+  --------------------------------------------------------- */
 
   async function getAdmin() {
-    const supabase = createClient();
-
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     if (!user) {
-      router.replace("/login");
+      window.location.href = "/login";
       return null;
     }
 
-    const { data: profile, error: profileError } =
-      await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single();
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
 
-    if (
-      profileError ||
-      !profile ||
-      profile.role !== "admin"
-    ) {
-      router.replace("/");
+    if (profileError || profile?.role !== "admin") {
+      window.location.href = "/login";
       return null;
     }
 
     return user;
   }
 
-  async function loadActivity() {
+  /* ---------------------------------------------------------
+     LOAD ACTIVITY
+  --------------------------------------------------------- */
+
+  async function loadActivity(showRefresh = false) {
+    if (showRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     setError("");
 
-    const supabase = createClient();
+    try {
+      const admin = await getAdmin();
 
-    const admin = await getAdmin();
+      if (!admin) return;
 
-    if (!admin) {
-      setLoading(false);
-      return;
-    }
+      const [transactionResult, memberResult] = await Promise.all([
+        supabase
+          .from("transactions")
+          .select(
+            "id, member_id, type, amount, description, status, created_at"
+          )
+          .order("created_at", { ascending: false }),
 
-    const [
-      transactionsResult,
-      membersResult,
-    ] = await Promise.all([
-      supabase
-        .from("transactions")
-        .select(
-          "id, member_id, type, amount, description, status, created_at"
-        )
-        .order("created_at", {
-          ascending: false,
-        }),
+        supabase
+          .from("members")
+          .select("id, full_name")
+          .order("full_name", { ascending: true }),
+      ]);
 
-      supabase
-        .from("members")
-        .select("id, full_name")
-        .order("full_name", {
-          ascending: true,
-        }),
-    ]);
+      if (transactionResult.error) {
+        throw transactionResult.error;
+      }
 
-    if (transactionsResult.error) {
-      setError(
-        transactionsResult.error.message
+      if (memberResult.error) {
+        throw memberResult.error;
+      }
+
+      setTransactions(
+        (transactionResult.data || []) as Transaction[]
       );
+
+      setMembers(memberResult.data || []);
+    } catch (err: any) {
+      console.error("Activity loading error:", err);
+      setError(err?.message || "Failed to load activity.");
+    } finally {
       setLoading(false);
-      return;
+      setRefreshing(false);
     }
-
-    if (membersResult.error) {
-      setError(
-        membersResult.error.message
-      );
-      setLoading(false);
-      return;
-    }
-
-    setTransactions(
-      (transactionsResult.data ??
-        []) as Transaction[]
-    );
-
-    setMembers(
-      (membersResult.data ??
-        []) as Member[]
-    );
-
-    setLoading(false);
   }
 
-  async function refreshActivity() {
-    if (refreshing) return;
+  useEffect(() => {
+    loadActivity();
+  }, []);
 
-    setRefreshing(true);
-    await loadActivity();
-    setRefreshing(false);
-  }
+  /* ---------------------------------------------------------
+     FORM
+  --------------------------------------------------------- */
 
   function resetForm() {
     setSource("member");
@@ -208,13 +185,10 @@ export default function AdminActivityPage() {
 
   function openAddModal() {
     resetForm();
-    setError("");
     setShowModal(true);
   }
 
-  function openEditModal(
-    transaction: Transaction
-  ) {
+  function openEditModal(transaction: Transaction) {
     setEditing(transaction);
 
     if (transaction.member_id) {
@@ -225,28 +199,21 @@ export default function AdminActivityPage() {
       setMemberId("");
     }
 
-    const transactionType =
-      transaction.type?.toLowerCase();
-
     if (
-      transactionType === "deposit" ||
-      transactionType === "withdrawal" ||
-      transactionType === "expense"
+      transaction.type === "deposit" ||
+      transaction.type === "withdrawal" ||
+      transaction.type === "expense" ||
+      transaction.type === "service_fee"
     ) {
-      setType(transactionType);
+      setType(transaction.type);
     } else {
       setType("expense");
     }
 
     setAmount(String(transaction.amount));
-    setDescription(
-      transaction.description || ""
-    );
-    setStatus(
-      transaction.status || "completed"
-    );
+    setDescription(transaction.description || "");
+    setStatus(transaction.status);
 
-    setError("");
     setShowModal(true);
   }
 
@@ -257,20 +224,17 @@ export default function AdminActivityPage() {
     resetForm();
   }
 
-  async function saveActivity() {
-    if (saving) return;
+  /* ---------------------------------------------------------
+     SAVE ACTIVITY
+  --------------------------------------------------------- */
 
+  async function saveActivity() {
     setError("");
 
     const numericAmount = Number(amount);
 
-    if (
-      !Number.isFinite(numericAmount) ||
-      numericAmount <= 0
-    ) {
-      setError(
-        "Please enter a valid amount."
-      );
+    if (!amount || Number.isNaN(numericAmount) || numericAmount <= 0) {
+      setError("Please enter a valid amount.");
       return;
     }
 
@@ -279,539 +243,515 @@ export default function AdminActivityPage() {
       return;
     }
 
-    if (
-      source === "cooperative" &&
-      type !== "expense"
-    ) {
+    if (source === "cooperative" && type !== "expense") {
+      setError("Cooperative activity can only be recorded as Others.");
+      return;
+    }
+
+    if (type === "service_fee" && source !== "member") {
       setError(
-        "Cooperative activity must be an Others activity."
+        "TradeBishi Development & Service Fees must be assigned to a member."
       );
       return;
     }
 
     if (!description.trim()) {
-      setError(
-        "Please enter a description."
-      );
+      setError("Please enter a description.");
       return;
     }
 
     setSaving(true);
 
-    const supabase = createClient();
+    try {
+      const data = {
+        member_id: source === "member" ? memberId : null,
 
-    const admin = await getAdmin();
+        /*
+         * Member:
+         * deposit
+         * withdrawal
+         * service_fee
+         *
+         * Cooperative:
+         * expense
+         */
+        type:
+          source === "cooperative"
+            ? "expense"
+            : type,
 
-    if (!admin) {
+        amount: numericAmount,
+        description: description.trim(),
+        status,
+      };
+
+      if (editing) {
+        const { error: updateError } = await supabase
+          .from("transactions")
+          .update(data)
+          .eq("id", editing.id);
+
+        if (updateError) {
+          throw updateError;
+        }
+      } else {
+        const { error: insertError } = await supabase
+          .from("transactions")
+          .insert(data);
+
+        if (insertError) {
+          throw insertError;
+        }
+      }
+
+      setShowModal(false);
+      resetForm();
+
+      await loadActivity();
+    } catch (err: any) {
+      console.error("Save activity error:", err);
+      setError(
+        err?.message ||
+          "Failed to save activity. Please try again."
+      );
+    } finally {
       setSaving(false);
-      return;
     }
-
-    const data = {
-      member_id:
-        source === "member"
-          ? memberId
-          : null,
-
-      type:
-        source === "cooperative"
-          ? "expense"
-          : type,
-
-      amount: numericAmount,
-
-      description:
-        description.trim(),
-
-      status,
-    };
-
-    let result;
-
-    if (editing) {
-      result = await supabase
-        .from("transactions")
-        .update(data)
-        .eq("id", editing.id);
-    } else {
-      result = await supabase
-        .from("transactions")
-        .insert(data);
-    }
-
-    if (result.error) {
-      setError(result.error.message);
-      setSaving(false);
-      return;
-    }
-
-    setShowModal(false);
-    resetForm();
-
-    await loadActivity();
-
-    setSaving(false);
   }
 
-  async function deleteActivity(
-    transaction: Transaction
-  ) {
-    if (deleting) return;
+  /* ---------------------------------------------------------
+     DELETE ACTIVITY
+  --------------------------------------------------------- */
 
+  async function deleteActivity(id: string) {
     const confirmed = window.confirm(
-      `Delete this ${displayType(
-        transaction.type
-      )} of ${currency(
-        Number(transaction.amount)
-      )}?\n\nThis cannot be undone.`
+      "Are you sure you want to delete this activity?"
     );
 
     if (!confirmed) return;
 
-    setDeleting(true);
+    setDeleting(id);
     setError("");
 
-    const supabase = createClient();
-
-    const admin = await getAdmin();
-
-    if (!admin) {
-      setDeleting(false);
-      return;
-    }
-
-    const { error: deleteError } =
-      await supabase
+    try {
+      const { error: deleteError } = await supabase
         .from("transactions")
         .delete()
-        .eq("id", transaction.id);
+        .eq("id", id);
 
-    if (deleteError) {
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      await loadActivity();
+    } catch (err: any) {
+      console.error("Delete activity error:", err);
       setError(
-        deleteError.message
+        err?.message ||
+          "Failed to delete activity. Please try again."
       );
-      setDeleting(false);
-      return;
+    } finally {
+      setDeleting(null);
     }
-
-    await loadActivity();
-
-    setDeleting(false);
   }
 
-  async function logout() {
-    const supabase = createClient();
+  /* ---------------------------------------------------------
+     HELPERS
+  --------------------------------------------------------- */
 
-    await supabase.auth.signOut();
+  function memberName(memberId: string | null) {
+    if (!memberId) return "TradeBishi Cooperative";
 
-    router.replace("/login");
+    const member = members.find((m) => m.id === memberId);
+
+    return member?.full_name || "Unknown Member";
   }
 
-  function currency(value: number) {
-    return `₹${Number(
-      value || 0
-    ).toLocaleString("en-IN", {
-      maximumFractionDigits: 2,
-    })}`;
+  function displayType(type: TransactionType) {
+    switch (type) {
+      case "deposit":
+        return "Deposit";
+
+      case "withdrawal":
+        return "Withdrawal";
+
+      case "expense":
+        return "Others";
+
+      case "service_fee":
+        return "TradeBishi Development & Service Fee";
+
+      case "trade_return":
+        return "Trade Return";
+
+      default:
+        return "Activity";
+    }
   }
 
-  function memberName(
-    memberId: string | null
-  ) {
-    if (!memberId) {
-      return "Cooperative";
-    }
+  function typeDescription(type: ActivityType) {
+    switch (type) {
+      case "deposit":
+        return "Money added to a member's balance.";
 
-    return (
-      members.find(
-        (member) =>
-          member.id === memberId
-      )?.full_name ||
-      "Unknown Member"
-    );
+      case "withdrawal":
+        return "Money withdrawn by a member.";
+
+      case "service_fee":
+        return "Amount deducted from the member and credited internally to TradeBishi.";
+
+      case "expense":
+        return "Cooperative expense paid outside the member balances.";
+
+      default:
+        return "";
+    }
   }
 
-  function displayType(
-    value: string
-  ) {
-    if (value === "deposit") {
-      return "Deposit";
-    }
+  /* ---------------------------------------------------------
+     SUMMARY
+  --------------------------------------------------------- */
 
-    if (value === "withdrawal") {
-      return "Withdrawal";
-    }
-
-    if (value === "expense") {
-      return "Others";
-    }
-
-    return value;
-  }
-
-  const deposits = transactions.filter(
-    (item) =>
-      item.type === "deposit"
-  );
-
-  const withdrawals = transactions.filter(
-    (item) =>
-      item.type === "withdrawal"
-  );
-
-  const expenses = transactions.filter(
-    (item) =>
-      item.type === "expense"
-  );
-
-  const depositTotal =
-    deposits.reduce(
-      (sum, item) =>
-        sum +
-        Number(item.amount || 0),
-      0
+  const summary = useMemo(() => {
+    const completed = transactions.filter(
+      (transaction) => transaction.status === "completed"
     );
 
-  const withdrawalTotal =
-    withdrawals.reduce(
-      (sum, item) =>
-        sum +
-        Number(item.amount || 0),
-      0
-    );
+    const deposits = completed
+      .filter((transaction) => transaction.type === "deposit")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
 
-  const expenseTotal =
-    expenses.reduce(
-      (sum, item) =>
-        sum +
-        Number(item.amount || 0),
-      0
-    );
+    const withdrawals = completed
+      .filter((transaction) => transaction.type === "withdrawal")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
 
-  const completedCount =
-    transactions.filter(
-      (item) =>
-        item.status === "completed"
-    ).length;
+    const expenses = completed
+      .filter((transaction) => transaction.type === "expense")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
 
-  const pendingCount =
-    transactions.filter(
-      (item) =>
-        item.status === "pending"
-    ).length;
+    const serviceFees = completed
+      .filter((transaction) => transaction.type === "service_fee")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
 
-  const filteredTransactions =
-    useMemo(() => {
-      const query =
-        search.trim().toLowerCase();
+    return {
+      deposits,
+      withdrawals,
+      expenses,
+      serviceFees,
+    };
+  }, [transactions]);
 
-      return transactions.filter(
-        (transaction) => {
-          const matchesSearch =
-            !query ||
-            memberName(
-              transaction.member_id
-            )
-              .toLowerCase()
-              .includes(query) ||
-            (
-              transaction.description ||
-              ""
-            )
-              .toLowerCase()
-              .includes(query) ||
-            transaction.type
-              .toLowerCase()
-              .includes(query) ||
-            displayType(
-              transaction.type
-            )
-              .toLowerCase()
-              .includes(query);
+  /* ---------------------------------------------------------
+     FILTERING
+  --------------------------------------------------------- */
 
-          const matchesType =
-            filterType === "all" ||
-            transaction.type ===
-              filterType;
+  const filteredTransactions = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
-          const matchesStatus =
-            filterStatus === "all" ||
-            transaction.status ===
-              filterStatus;
+    return transactions.filter((transaction) => {
+      const matchesSearch =
+        !query ||
+        memberName(transaction.member_id)
+          .toLowerCase()
+          .includes(query) ||
+        (transaction.description || "")
+          .toLowerCase()
+          .includes(query) ||
+        displayType(transaction.type)
+          .toLowerCase()
+          .includes(query);
 
-          return (
-            matchesSearch &&
-            matchesType &&
-            matchesStatus
-          );
-        }
+      const matchesType =
+        filterType === "all" ||
+        transaction.type === filterType;
+
+      const matchesStatus =
+        filterStatus === "all" ||
+        transaction.status === filterStatus;
+
+      return (
+        matchesSearch &&
+        matchesType &&
+        matchesStatus
       );
-    }, [
-      transactions,
-      members,
-      search,
-      filterType,
-      filterStatus,
-    ]);
+    });
+  }, [
+    transactions,
+    members,
+    search,
+    filterType,
+    filterStatus,
+  ]);
+
+  /* ---------------------------------------------------------
+     UI HELPERS
+  --------------------------------------------------------- */
+
+  function getTypeIcon(type: TransactionType) {
+    switch (type) {
+      case "deposit":
+        return <ArrowDownLeft size={17} />;
+
+      case "withdrawal":
+        return <ArrowUpRight size={17} />;
+
+      case "service_fee":
+        return <Receipt size={17} />;
+
+      case "expense":
+        return <Receipt size={17} />;
+
+      default:
+        return <Activity size={17} />;
+    }
+  }
+
+  function getTypeClass(type: TransactionType) {
+    switch (type) {
+      case "deposit":
+        return "text-emerald-400 bg-emerald-400/10 border-emerald-400/20";
+
+      case "withdrawal":
+        return "text-red-400 bg-red-400/10 border-red-400/20";
+
+      case "service_fee":
+        return "text-violet-400 bg-violet-400/10 border-violet-400/20";
+
+      case "expense":
+        return "text-orange-400 bg-orange-400/10 border-orange-400/20";
+
+      default:
+        return "text-blue-400 bg-blue-400/10 border-blue-400/20";
+    }
+  }
+
+  function getStatusIcon(
+    transactionStatus: Transaction["status"]
+  ) {
+    switch (transactionStatus) {
+      case "completed":
+        return <CheckCircle2 size={15} />;
+
+      case "pending":
+        return <Clock3 size={15} />;
+
+      case "cancelled":
+        return <XCircle size={15} />;
+
+      default:
+        return null;
+    }
+  }
+
+  function getStatusClass(
+    transactionStatus: Transaction["status"]
+  ) {
+    switch (transactionStatus) {
+      case "completed":
+        return "text-emerald-400";
+
+      case "pending":
+        return "text-yellow-400";
+
+      case "cancelled":
+        return "text-red-400";
+
+      default:
+        return "text-white/50";
+    }
+  }
+
+  /* ---------------------------------------------------------
+     LOADING
+  --------------------------------------------------------- */
 
   if (loading) {
     return (
-      <main style={pageStyle}>
-        <div style={loadingStyle}>
-          <div style={loadingSpinner}>
-            <RefreshCw size={18} />
-          </div>
-
-          <span>
-            Loading Activity...
-          </span>
+      <div className="min-h-screen bg-[#050505] text-white flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <RefreshCw
+            size={28}
+            className="animate-spin text-white/50"
+          />
+          <p className="text-sm text-white/50">
+            Loading activity...
+          </p>
         </div>
-      </main>
+      </div>
     );
   }
 
+  /* ---------------------------------------------------------
+     PAGE
+  --------------------------------------------------------- */
+
   return (
-    <main style={pageStyle}>
-      <div style={containerStyle}>
+    <div className="min-h-screen bg-[#050505] text-white">
+      {/* HEADER */}
 
-        {/* HEADER */}
-
-        <header style={headerStyle}>
-          <div>
-            <button
-              type="button"
-              onClick={() =>
-                router.push("/admin")
-              }
-              style={backButton}
-            >
-              ← Admin Dashboard
-            </button>
-
-            <div style={titleRow}>
-              <div style={titleIcon}>
-                <Activity size={21} />
+      <header className="sticky top-0 z-30 border-b border-white/[0.08] bg-[#050505]/90 backdrop-blur-xl">
+        <div className="max-w-[1500px] mx-auto px-5 md:px-8 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/[0.08] border border-white/[0.08] flex items-center justify-center">
+                <Activity size={20} />
               </div>
 
               <div>
-                <p style={eyebrowStyle}>
-                  TRADEBISHI ADMIN
-                </p>
-
-                <h1 style={titleStyle}>
-                  Cooperative Activity
+                <h1 className="text-lg md:text-xl font-semibold tracking-tight">
+                  Activity
                 </h1>
+
+                <p className="text-xs text-white/40">
+                  Cooperative financial ledger
+                </p>
               </div>
             </div>
 
-            <p style={subtitleStyle}>
-              Monitor and manage every
-              member transaction and
-              cooperative activity.
-            </p>
-          </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => loadActivity(true)}
+                disabled={refreshing}
+                className="h-10 px-3 rounded-xl border border-white/[0.08] bg-white/[0.04] hover:bg-white/[0.08] transition flex items-center gap-2 text-sm disabled:opacity-50"
+              >
+                <RefreshCw
+                  size={16}
+                  className={
+                    refreshing ? "animate-spin" : ""
+                  }
+                />
 
-          <div style={headerButtons}>
-            <button
-              type="button"
-              onClick={openAddModal}
-              style={primaryButton}
-            >
-              <Plus size={16} />
-              Add Activity
-            </button>
+                <span className="hidden sm:inline">
+                  Refresh
+                </span>
+              </button>
 
-            <button
-              type="button"
-              onClick={refreshActivity}
-              disabled={refreshing}
-              style={{
-                ...secondaryButton,
-                opacity:
-                  refreshing ? 0.6 : 1,
-              }}
-            >
-              <RefreshCw
-                size={16}
-                style={{
-                  animation:
-                    refreshing
-                      ? "spin 1s linear infinite"
-                      : "none",
+              <button
+                onClick={() => {
+                  supabase.auth.signOut();
+                  window.location.href = "/login";
                 }}
-              />
+                className="h-10 px-3 rounded-xl border border-white/[0.08] bg-white/[0.04] hover:bg-white/[0.08] transition flex items-center gap-2 text-sm"
+              >
+                <LogOut size={16} />
 
-              {refreshing
-                ? "Refreshing..."
-                : "Refresh"}
-            </button>
+                <span className="hidden sm:inline">
+                  Logout
+                </span>
+              </button>
 
-            <button
-              type="button"
-              onClick={logout}
-              style={secondaryButton}
-            >
-              <LogOut size={16} />
-              Sign Out
-            </button>
+              <button
+                onClick={openAddModal}
+                className="h-10 px-4 rounded-xl bg-white text-black hover:bg-white/90 transition flex items-center gap-2 text-sm font-medium"
+              >
+                <Plus size={17} />
+                Add Activity
+              </button>
+            </div>
           </div>
-        </header>
+        </div>
+      </header>
 
+      <main className="max-w-[1500px] mx-auto px-5 md:px-8 py-7">
         {/* ERROR */}
 
         {error && (
-          <div style={errorBox}>
-            <XCircle size={17} />
-            <span>{error}</span>
-
-            <button
-              type="button"
-              onClick={() =>
-                setError("")
-              }
-              style={errorClose}
-            >
-              <X size={15} />
-            </button>
+          <div className="mb-6 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+            {error}
           </div>
         )}
 
         {/* SUMMARY */}
 
-        <section style={summaryGrid}>
-          <SummaryCard
-            title="Member Deposits"
-            value={currency(
-              depositTotal
-            )}
-            icon={
-              <ArrowDownLeft size={18} />
-            }
-            accent="green"
-            subtitle={`${deposits.length} records`}
-          />
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-7">
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-5">
+            <p className="text-xs text-white/40 mb-2">
+              Total Deposits
+            </p>
 
-          <SummaryCard
-            title="Member Withdrawals"
-            value={currency(
-              withdrawalTotal
-            )}
-            icon={
-              <ArrowUpRight size={18} />
-            }
-            accent="red"
-            subtitle={`${withdrawals.length} records`}
-          />
-
-          <SummaryCard
-            title="Cooperative Others"
-            value={currency(
-              expenseTotal
-            )}
-            icon={
-              <Receipt size={18} />
-            }
-            accent="yellow"
-            subtitle={`${expenses.length} records`}
-          />
-
-          <SummaryCard
-            title="Total Activity"
-            value={transactions.length.toString()}
-            icon={
-              <Activity size={18} />
-            }
-            accent="blue"
-            subtitle={`${completedCount} completed · ${pendingCount} pending`}
-          />
-        </section>
-
-        {/* ACTIVITY SECTION */}
-
-        <section style={sectionStyle}>
-          <div style={sectionHeader}>
-            <div>
-              <div style={sectionLabelRow}>
-                <div
-                  style={sectionLabelDot}
-                />
-
-                <p style={cardLabel}>
-                  ALL ACTIVITY
-                </p>
-              </div>
-
-              <h2 style={sectionTitle}>
-                Activity Records
-              </h2>
-
-              <p style={sectionSubtitle}>
-                Every deposit, withdrawal
-                and cooperative activity
-                recorded in TradeBishi.
-              </p>
-            </div>
-
-            <div style={recordBadge}>
-              <Activity size={13} />
-
-              {filteredTransactions.length}
-              {" / "}
-              {transactions.length}
-            </div>
+            <p className="text-2xl font-semibold">
+              ₹
+              {summary.deposits.toLocaleString("en-IN")}
+            </p>
           </div>
 
-          {/* FILTER BAR */}
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-5">
+            <p className="text-xs text-white/40 mb-2">
+              Total Withdrawals
+            </p>
 
-          <div style={filterBar}>
-            <div
-              style={searchWrapper}
-            >
+            <p className="text-2xl font-semibold">
+              ₹
+              {summary.withdrawals.toLocaleString(
+                "en-IN"
+              )}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-5">
+            <p className="text-xs text-white/40 mb-2">
+              Cooperative Expenses
+            </p>
+
+            <p className="text-2xl font-semibold">
+              ₹
+              {summary.expenses.toLocaleString("en-IN")}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-violet-400/20 bg-violet-400/[0.06] p-5">
+            <p className="text-xs text-violet-300/60 mb-2">
+              TradeBishi Fees
+            </p>
+
+            <p className="text-2xl font-semibold text-violet-300">
+              ₹
+              {summary.serviceFees.toLocaleString(
+                "en-IN"
+              )}
+            </p>
+          </div>
+        </div>
+
+        {/* FILTER BAR */}
+
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 mb-5">
+          <div className="flex flex-col xl:flex-row gap-3">
+            <div className="relative flex-1">
               <Search
-                size={16}
-                style={searchIcon}
+                size={17}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-white/35"
               />
 
               <input
                 value={search}
-                onChange={(event) =>
-                  setSearch(
-                    event.target.value
-                  )
+                onChange={(e) =>
+                  setSearch(e.target.value)
                 }
-                placeholder="Search member or description..."
-                style={searchInput}
+                placeholder="Search member, activity or description..."
+                className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] pl-11 pr-4 outline-none focus:border-white/20 transition text-sm placeholder:text-white/25"
               />
-
-              {search && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSearch("")
-                  }
-                  style={clearSearch}
-                >
-                  <X size={14} />
-                </button>
-              )}
             </div>
 
-            <div style={filterControl}>
-              <Filter size={14} />
+            <div className="flex items-center gap-2">
+              <Filter
+                size={16}
+                className="text-white/35 hidden sm:block"
+              />
 
               <select
                 value={filterType}
-                onChange={(event) =>
+                onChange={(e) =>
                   setFilterType(
-                    event.target.value as
+                    e.target.value as
                       | "all"
                       | ActivityType
                   )
                 }
-                style={filterSelect}
+                className="h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 outline-none text-sm text-white"
               >
                 <option value="all">
-                  All Types
+                  All Activity
                 </option>
 
                 <option value="deposit">
@@ -822,29 +762,27 @@ export default function AdminActivityPage() {
                   Withdrawals
                 </option>
 
+                <option value="service_fee">
+                  TradeBishi Fees
+                </option>
+
                 <option value="expense">
                   Others
                 </option>
               </select>
-            </div>
-
-            <div style={filterControl}>
-              <CheckCircle2
-                size={14}
-              />
 
               <select
                 value={filterStatus}
-                onChange={(event) =>
+                onChange={(e) =>
                   setFilterStatus(
-                    event.target.value as
+                    e.target.value as
                       | "all"
                       | "completed"
                       | "pending"
                       | "cancelled"
                   )
                 }
-                style={filterSelect}
+                className="h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 outline-none text-sm text-white"
               >
                 <option value="all">
                   All Status
@@ -864,1830 +802,502 @@ export default function AdminActivityPage() {
               </select>
             </div>
           </div>
+        </div>
 
-          {transactions.length === 0 ? (
-            <div style={emptyState}>
-              <div style={emptyIcon}>
-                <Activity size={27} />
-              </div>
+        {/* TABLE */}
 
-              <h3 style={emptyTitle}>
-                No activity yet
-              </h3>
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
+            <div>
+              <h2 className="font-medium">
+                Activity Ledger
+              </h2>
 
-              <p style={emptyText}>
-                No cooperative activity has
-                been recorded yet.
+              <p className="text-xs text-white/35 mt-1">
+                {filteredTransactions.length}{" "}
+                {filteredTransactions.length === 1
+                  ? "activity"
+                  : "activities"}
               </p>
-
-              <button
-                type="button"
-                onClick={
-                  openAddModal
-                }
-                style={primaryButton}
-              >
-                <Plus size={16} />
-                Add First Activity
-              </button>
             </div>
-          ) : filteredTransactions.length ===
-            0 ? (
-            <div style={emptyState}>
-              <div style={emptyIcon}>
-                <Search size={27} />
-              </div>
+          </div>
 
-              <h3 style={emptyTitle}>
-                No matching activity
-              </h3>
+          {filteredTransactions.length === 0 ? (
+            <div className="py-20 text-center">
+              <Activity
+                size={34}
+                className="mx-auto text-white/15 mb-4"
+              />
 
-              <p style={emptyText}>
-                Try changing your search
-                or filters.
+              <p className="text-white/50">
+                No activities found
               </p>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setSearch("");
-                  setFilterType("all");
-                  setFilterStatus("all");
-                }}
-                style={secondaryButton}
-              >
-                Clear Filters
-              </button>
+              <p className="text-xs text-white/25 mt-1">
+                Try changing your search or filters.
+              </p>
             </div>
           ) : (
-            <div style={tableWrapper}>
-              <div style={tableHeader}>
-                <span>TYPE</span>
-                <span>SOURCE</span>
-                <span>AMOUNT</span>
-                <span>DESCRIPTION</span>
-                <span>STATUS</span>
-                <span>DATE</span>
-                <span>ACTIONS</span>
-              </div>
-
+            <div className="divide-y divide-white/[0.06]">
               {filteredTransactions.map(
                 (transaction) => (
                   <div
-                    key={
-                      transaction.id
-                    }
-                    style={tableRow}
+                    key={transaction.id}
+                    className="px-5 py-4 hover:bg-white/[0.025] transition"
                   >
-                    <TypeBadge
-                      type={
-                        transaction.type
-                      }
-                    />
+                    <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                      {/* TYPE */}
 
-                    <div>
-                      <strong
-                        style={
-                          memberNameStyle
-                        }
+                      <div className="flex items-center gap-3 min-w-0 lg:w-[300px]">
+                        <div
+                          className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${getTypeClass(
+                            transaction.type
+                          )}`}
+                        >
+                          {getTypeIcon(
+                            transaction.type
+                          )}
+                        </div>
+
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate">
+                            {displayType(
+                              transaction.type
+                            )}
+                          </p>
+
+                          <p className="text-xs text-white/35 truncate">
+                            {memberName(
+                              transaction.member_id
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* DESCRIPTION */}
+
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white/75 truncate">
+                          {transaction.description ||
+                            "No description"}
+                        </p>
+
+                        <p className="text-xs text-white/30 mt-1">
+                          {new Date(
+                            transaction.created_at
+                          ).toLocaleString("en-IN", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })}
+                        </p>
+                      </div>
+
+                      {/* AMOUNT */}
+
+                      <div className="lg:w-[150px]">
+                        <p
+                          className={`text-sm font-semibold ${
+                            transaction.type ===
+                              "deposit" ||
+                            transaction.type ===
+                              "trade_return"
+                              ? "text-emerald-400"
+                              : transaction.type ===
+                                "service_fee"
+                              ? "text-violet-300"
+                              : "text-white"
+                          }`}
+                        >
+                          {transaction.type ===
+                            "deposit" ||
+                          transaction.type ===
+                            "trade_return"
+                            ? "+"
+                            : "-"}
+
+                          ₹
+                          {Number(
+                            transaction.amount
+                          ).toLocaleString("en-IN")}
+                        </p>
+                      </div>
+
+                      {/* STATUS */}
+
+                      <div
+                        className={`flex items-center gap-1.5 text-xs capitalize lg:w-[110px] ${getStatusClass(
+                          transaction.status
+                        )}`}
                       >
-                        {memberName(
-                          transaction.member_id
+                        {getStatusIcon(
+                          transaction.status
                         )}
-                      </strong>
 
-                      <p
-                        style={
-                          transaction.member_id
-                            ? mutedText
-                            : expenseSource
-                        }
-                      >
-                        {transaction.member_id
-                          ? "Member transaction"
-                          : "Cooperative activity"}
-                      </p>
-                    </div>
+                        {transaction.status}
+                      </div>
 
-                    <strong
-                      style={
-                        amountStyle
-                      }
-                    >
-                      {currency(
-                        Number(
-                          transaction.amount
-                        )
-                      )}
-                    </strong>
+                      {/* ACTIONS */}
 
-                    <span
-                      style={
-                        descriptionText
-                      }
-                      title={
-                        transaction.description ||
-                        ""
-                      }
-                    >
-                      {transaction.description ||
-                        "—"}
-                    </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            openEditModal(transaction)
+                          }
+                          className="w-9 h-9 rounded-lg border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.08] flex items-center justify-center transition"
+                          title="Edit"
+                        >
+                          <Pencil size={15} />
+                        </button>
 
-                    <StatusBadge
-                      status={
-                        transaction.status
-                      }
-                    />
-
-                    <span
-                      style={
-                        dateText
-                      }
-                    >
-                      {new Date(
-                        transaction.created_at
-                      ).toLocaleString(
-                        "en-IN",
-                        {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }
-                      )}
-                    </span>
-
-                    <div
-                      style={
-                        actions
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openEditModal(
-                            transaction
-                          )
-                        }
-                        style={
-                          iconButton
-                        }
-                        title="Edit activity"
-                      >
-                        <Pencil
-                          size={15}
-                        />
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={
-                          deleting
-                        }
-                        onClick={() =>
-                          deleteActivity(
-                            transaction
-                          )
-                        }
-                        style={{
-                          ...deleteIconButton,
-                          opacity:
-                            deleting
-                              ? 0.5
-                              : 1,
-                        }}
-                        title="Delete activity"
-                      >
-                        <Trash2
-                          size={15}
-                        />
-                      </button>
+                        <button
+                          onClick={() =>
+                            deleteActivity(
+                              transaction.id
+                            )
+                          }
+                          disabled={
+                            deleting ===
+                            transaction.id
+                          }
+                          className="w-9 h-9 rounded-lg border border-red-400/10 bg-red-400/[0.03] hover:bg-red-400/10 text-red-400 flex items-center justify-center transition disabled:opacity-40"
+                          title="Delete"
+                        >
+                          {deleting ===
+                          transaction.id ? (
+                            <RefreshCw
+                              size={15}
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <Trash2 size={15} />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )
               )}
             </div>
           )}
-        </section>
-      </div>
+        </div>
+      </main>
 
-      {/* MODAL */}
+      {/* ADD / EDIT MODAL */}
 
       {showModal && (
-        <div
-          style={modalOverlay}
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              closeModal();
-            }
-          }}
-        >
-          <div style={modal}>
-            <div style={modalHeader}>
-              <div>
-                <p
-                  style={
-                    eyebrowStyle
-                  }
-                >
-                  {editing
-                    ? "EDIT ACTIVITY"
-                    : "ADMIN ACTION"}
-                </p>
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-3xl border border-white/[0.1] bg-[#111111] shadow-2xl overflow-hidden">
+            {/* MODAL HEADER */}
 
-                <h2
-                  style={
-                    modalTitle
-                  }
-                >
+            <div className="px-6 py-5 border-b border-white/[0.08] flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold">
                   {editing
                     ? "Edit Activity"
                     : "Add Activity"}
                 </h2>
 
-                <p
-                  style={
-                    modalSubtitle
-                  }
-                >
-                  {editing
-                    ? "Update the selected activity."
-                    : "Record a member transaction or cooperative activity."}
+                <p className="text-xs text-white/35 mt-1">
+                  Record an activity in the cooperative
+                  ledger.
                 </p>
               </div>
 
               <button
-                type="button"
-                onClick={
-                  closeModal
-                }
-                style={
-                  closeButton
-                }
+                onClick={closeModal}
+                disabled={saving}
+                className="w-9 h-9 rounded-xl hover:bg-white/[0.08] flex items-center justify-center transition"
               >
                 <X size={18} />
               </button>
             </div>
 
-            {/* SOURCE */}
+            {/* MODAL BODY */}
 
-            <div style={formGroup}>
-              <label
-                style={
-                  formLabel
-                }
-              >
-                Activity Source
-              </label>
+            <div className="p-6 space-y-5">
+              {/* SOURCE */}
 
-              <div
-                style={
-                  sourceGrid
-                }
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSource(
-                      "member"
-                    );
+              <div>
+                <label className="text-xs text-white/45 block mb-2">
+                  Activity Source
+                </label>
 
-                    if (
-                      type ===
-                      "expense"
-                    ) {
-                      setType(
-                        "deposit"
-                      );
-                    }
-                  }}
-                  style={{
-                    ...sourceButton,
-                    ...(source ===
-                    "member"
-                      ? sourceButtonActive
-                      : {}),
-                  }}
-                >
-                  <span
-                    style={
-                      sourceIcon
-                    }
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSource("member");
+
+                      if (
+                        type === "expense"
+                      ) {
+                        setType("deposit");
+                      }
+                    }}
+                    className={`h-11 rounded-xl border text-sm transition ${
+                      source === "member"
+                        ? "border-white/20 bg-white/[0.09]"
+                        : "border-white/[0.08] bg-white/[0.03] text-white/50"
+                    }`}
                   >
-                    👤
-                  </span>
+                    Member Activity
+                  </button>
 
-                  <span>
-                    Member
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSource(
-                      "cooperative"
-                    );
-
-                    setType(
-                      "expense"
-                    );
-
-                    setMemberId(
-                      ""
-                    );
-                  }}
-                  style={{
-                    ...sourceButton,
-                    ...(source ===
-                    "cooperative"
-                      ? sourceButtonActive
-                      : {}),
-                  }}
-                >
-                  <span
-                    style={
-                      sourceIcon
-                    }
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSource("cooperative");
+                      setType("expense");
+                      setMemberId("");
+                    }}
+                    className={`h-11 rounded-xl border text-sm transition ${
+                      source === "cooperative"
+                        ? "border-white/20 bg-white/[0.09]"
+                        : "border-white/[0.08] bg-white/[0.03] text-white/50"
+                    }`}
                   >
-                    🏢
-                  </span>
-
-                  <span>
                     Cooperative Activity
-                  </span>
-                </button>
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* MEMBER */}
+              {/* MEMBER */}
 
-            {source === "member" && (
-              <div style={formGroup}>
-                <label
-                  style={
-                    formLabel
+              {source === "member" && (
+                <div>
+                  <label className="text-xs text-white/45 block mb-2">
+                    Member
+                  </label>
+
+                  <select
+                    value={memberId}
+                    onChange={(e) =>
+                      setMemberId(e.target.value)
+                    }
+                    className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 outline-none text-sm text-white focus:border-white/20"
+                  >
+                    <option value="">
+                      Select member
+                    </option>
+
+                    {members.map((member) => (
+                      <option
+                        key={member.id}
+                        value={member.id}
+                      >
+                        {member.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* TYPE */}
+
+              <div>
+                <label className="text-xs text-white/45 block mb-2">
+                  Activity Type
+                </label>
+
+                {source === "member" ? (
+                  <>
+                    <select
+                      value={type}
+                      onChange={(e) =>
+                        setType(
+                          e.target.value as ActivityType
+                        )
+                      }
+                      className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 outline-none text-sm text-white focus:border-white/20"
+                    >
+                      <option value="deposit">
+                        Deposit
+                      </option>
+
+                      <option value="withdrawal">
+                        Withdrawal
+                      </option>
+
+                      <option value="service_fee">
+                        TradeBishi Development & Service
+                        Fees
+                      </option>
+                    </select>
+
+                    <p className="text-xs text-white/30 mt-2">
+                      {typeDescription(type)}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 flex items-center text-sm">
+                      Others / Cooperative Expense
+                    </div>
+
+                    <p className="text-xs text-white/30 mt-2">
+                      Records money spent by the cooperative
+                      outside member balances.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* AMOUNT */}
+
+              <div>
+                <label className="text-xs text-white/45 block mb-2">
+                  Amount
+                </label>
+
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/35">
+                    ₹
+                  </span>
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) =>
+                      setAmount(e.target.value)
+                    }
+                    placeholder="0.00"
+                    className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] pl-9 pr-4 outline-none text-sm focus:border-white/20"
+                  />
+                </div>
+              </div>
+
+              {/* DESCRIPTION */}
+
+              <div>
+                <label className="text-xs text-white/45 block mb-2">
+                  Description
+                </label>
+
+                <textarea
+                  value={description}
+                  onChange={(e) =>
+                    setDescription(e.target.value)
                   }
-                >
-                  Member
+                  placeholder={
+                    type === "service_fee"
+                      ? "e.g. TradeBishi development and service fee"
+                      : "Describe this activity..."
+                  }
+                  rows={3}
+                  className="w-full rounded-xl bg-white/[0.04] border border-white/[0.08] px-4 py-3 outline-none text-sm resize-none focus:border-white/20 placeholder:text-white/25"
+                />
+              </div>
+
+              {/* STATUS */}
+
+              <div>
+                <label className="text-xs text-white/45 block mb-2">
+                  Status
                 </label>
 
                 <select
-                  value={
-                    memberId
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setMemberId(
-                      event.target
-                        .value
+                  value={status}
+                  onChange={(e) =>
+                    setStatus(
+                      e.target.value as
+                        | "completed"
+                        | "pending"
+                        | "cancelled"
                     )
                   }
-                  style={
-                    formInput
-                  }
+                  className="w-full h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] px-3 outline-none text-sm text-white focus:border-white/20"
                 >
-                  <option value="">
-                    Select member
+                  <option value="completed">
+                    Completed
                   </option>
 
-                  {members.map(
-                    (
-                      member
-                    ) => (
-                      <option
-                        key={
-                          member.id
-                        }
-                        value={
-                          member.id
-                        }
-                      >
-                        {
-                          member.full_name
-                        }
-                      </option>
-                    )
-                  )}
+                  <option value="pending">
+                    Pending
+                  </option>
+
+                  <option value="cancelled">
+                    Cancelled
+                  </option>
                 </select>
               </div>
-            )}
 
-            {/* TYPE */}
+              {/* SERVICE FEE WARNING */}
 
-            <div style={formGroup}>
-              <label
-                style={
-                  formLabel
-                }
-              >
-                Activity Type
-              </label>
+              {type === "service_fee" &&
+                source === "member" && (
+                  <div className="rounded-2xl border border-violet-400/20 bg-violet-400/[0.06] p-4">
+                    <div className="flex gap-3">
+                      <Receipt
+                        size={18}
+                        className="text-violet-300 shrink-0 mt-0.5"
+                      />
 
-              <select
-                value={type}
-                onChange={(
-                  event
-                ) =>
-                  setType(
-                    event.target
-                      .value as ActivityType
-                  )
-                }
-                disabled={
-                  source ===
-                  "cooperative"
-                }
-                style={{
-                  ...formInput,
-                  opacity:
-                    source ===
-                    "cooperative"
-                      ? 0.55
-                      : 1,
-                }}
-              >
-                {source ===
-                "member" ? (
-                  <>
-                    <option value="deposit">
-                      Deposit
-                    </option>
+                      <div>
+                        <p className="text-sm font-medium text-violet-200">
+                          TradeBishi Development &
+                          Service Fee
+                        </p>
 
-                    <option value="withdrawal">
-                      Withdrawal
-                    </option>
-                  </>
-                ) : (
-                  <option value="expense">
-                    Others
-                  </option>
+                        <p className="text-xs text-violet-200/55 mt-1 leading-relaxed">
+                          This fee is recorded against the
+                          selected member. Once completed,
+                          the member's available balance
+                          will be reduced by this amount.
+                          It represents an internal
+                          TradeBishi fee, not a cooperative
+                          expense.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 )}
-              </select>
-            </div>
 
-            {/* AMOUNT */}
+              {/* ERROR */}
 
-            <div style={formGroup}>
-              <label
-                style={
-                  formLabel
-                }
-              >
-                Amount
-              </label>
+              {error && (
+                <div className="rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+                  {error}
+                </div>
+              )}
 
-              <div
-                style={
-                  inputWithPrefix
-                }
-              >
-                <span
-                  style={
-                    currencyPrefix
-                  }
+              {/* ACTIONS */}
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  disabled={saving}
+                  className="flex-1 h-11 rounded-xl border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.07] transition text-sm disabled:opacity-50"
                 >
-                  ₹
-                </span>
+                  Cancel
+                </button>
 
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={
-                    amount
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setAmount(
-                      event.target
-                        .value
-                    )
-                  }
-                  placeholder="0.00"
-                  style={
-                    amountInput
-                  }
-                />
-              </div>
-            </div>
-
-            {/* DESCRIPTION */}
-
-            <div style={formGroup}>
-              <label
-                style={
-                  formLabel
-                }
-              >
-                Description
-              </label>
-
-              <input
-                type="text"
-                value={
-                  description
-                }
-                onChange={(
-                  event
-                ) =>
-                  setDescription(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder={
-                  source ===
-                  "cooperative"
-                    ? "e.g. Office electricity or other cooperative activity"
-                    : "e.g. Monthly contribution"
-                }
-                style={
-                  formInput
-                }
-              />
-            </div>
-
-            {/* STATUS */}
-
-            <div style={formGroup}>
-              <label
-                style={
-                  formLabel
-                }
-              >
-                Status
-              </label>
-
-              <select
-                value={
-                  status
-                }
-                onChange={(
-                  event
-                ) =>
-                  setStatus(
-                    event.target
-                      .value
-                  )
-                }
-                style={
-                  formInput
-                }
-              >
-                <option value="completed">
-                  Completed
-                </option>
-
-                <option value="pending">
-                  Pending
-                </option>
-
-                <option value="cancelled">
-                  Cancelled
-                </option>
-              </select>
-            </div>
-
-            {source ===
-              "cooperative" && (
-              <div
-                style={
-                  hintBox
-                }
-              >
-                <Receipt
-                  size={16}
-                />
-
-                <span>
-                  This will be recorded as
-                  a cooperative activity with
-                  <strong>
-                    {" "}
-                    no member attached
-                  </strong>
-                  .
-                </span>
-              </div>
-            )}
-
-            <div
-              style={
-                modalActions
-              }
-            >
-              <button
-                type="button"
-                onClick={
-                  closeModal
-                }
-                disabled={
-                  saving
-                }
-                style={
-                  cancelButton
-                }
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={
-                  saveActivity
-                }
-                disabled={
-                  saving
-                }
-                style={{
-                  ...primaryButton,
-                  flex: 1,
-                  justifyContent:
-                    "center",
-                  opacity:
-                    saving
-                      ? 0.6
-                      : 1,
-                }}
-              >
-                {saving ? (
-                  <>
+                <button
+                  type="button"
+                  onClick={saveActivity}
+                  disabled={saving}
+                  className="flex-1 h-11 rounded-xl bg-white text-black hover:bg-white/90 transition text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {saving && (
                     <RefreshCw
                       size={16}
-                      style={{
-                        animation:
-                          "spin 1s linear infinite",
-                      }}
+                      className="animate-spin"
                     />
+                  )}
 
-                    Saving...
-                  </>
-                ) : editing ? (
-                  <>
-                    <Pencil
-                      size={16}
-                    />
-
-                    Save Changes
-                  </>
-                ) : (
-                  <>
-                    <Plus
-                      size={16}
-                    />
-
-                    Add Activity
-                  </>
-                )}
-              </button>
+                  {saving
+                    ? "Saving..."
+                    : editing
+                    ? "Save Changes"
+                    : "Add Activity"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
-
-      <style jsx global>{`
-        @keyframes spin {
-          from {
-            transform: rotate(0deg);
-          }
-
-          to {
-            transform: rotate(360deg);
-          }
-        }
-
-        * {
-          box-sizing: border-box;
-        }
-
-        button,
-        input,
-        select {
-          font-family: inherit;
-        }
-
-        button {
-          transition:
-            opacity 0.18s ease,
-            transform 0.18s ease,
-            background 0.18s ease,
-            border-color 0.18s ease;
-        }
-
-        button:not(:disabled):hover {
-          transform: translateY(-1px);
-        }
-
-        button:not(:disabled):active {
-          transform: translateY(0);
-        }
-
-        input::placeholder {
-          color: rgba(255, 255, 255, 0.25);
-        }
-
-        select option {
-          background: #111;
-          color: white;
-        }
-
-        @media (max-width: 1000px) {
-          .tradebishi-summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-          }
-        }
-
-        @media (max-width: 700px) {
-          .tradebishi-header {
-            align-items: flex-start !important;
-            flex-direction: column !important;
-          }
-
-          .tradebishi-header-buttons {
-            justify-content: flex-start !important;
-          }
-
-          .tradebishi-summary-grid {
-            grid-template-columns: 1fr !important;
-          }
-
-          .tradebishi-filter-bar {
-            flex-direction: column !important;
-          }
-
-          .tradebishi-search {
-            width: 100% !important;
-          }
-        }
-      `}</style>
-    </main>
-  );
-}
-
-/* =========================================================
-   COMPONENTS
-========================================================= */
-
-function SummaryCard({
-  title,
-  value,
-  icon,
-  accent,
-  subtitle,
-}: {
-  title: string;
-  value: string;
-  icon: React.ReactNode;
-  accent: "green" | "red" | "yellow" | "blue";
-  subtitle: string;
-}) {
-  const accentStyles = {
-    green: {
-      color: "#34d399",
-      background:
-        "rgba(52,211,153,0.10)",
-      border:
-        "rgba(52,211,153,0.15)",
-    },
-
-    red: {
-      color: "#f87171",
-      background:
-        "rgba(248,113,113,0.10)",
-      border:
-        "rgba(248,113,113,0.15)",
-    },
-
-    yellow: {
-      color: "#facc15",
-      background:
-        "rgba(250,204,21,0.10)",
-      border:
-        "rgba(250,204,21,0.15)",
-    },
-
-    blue: {
-      color: "#60a5fa",
-      background:
-        "rgba(96,165,250,0.10)",
-      border:
-        "rgba(96,165,250,0.15)",
-    },
-  };
-
-  const current =
-    accentStyles[accent];
-
-  return (
-    <div
-      style={{
-        ...summaryCard,
-        borderColor:
-          current.border,
-      }}
-    >
-      <div
-        style={{
-          ...summaryIcon,
-          color: current.color,
-          background:
-            current.background,
-        }}
-      >
-        {icon}
-      </div>
-
-      <p style={cardLabel}>
-        {title}
-      </p>
-
-      <h2
-        style={{
-          ...summaryValue,
-          color: "white",
-        }}
-      >
-        {value}
-      </h2>
-
-      <p
-        style={{
-          margin:
-            "8px 0 0",
-          color:
-            "rgba(255,255,255,0.28)",
-          fontSize: "11px",
-        }}
-      >
-        {subtitle}
-      </p>
     </div>
   );
 }
-
-function TypeBadge({
-  type,
-}: {
-  type: string;
-}) {
-  const config = {
-    deposit: {
-      color: "#34d399",
-      background:
-        "rgba(52,211,153,0.10)",
-      icon: (
-        <ArrowDownLeft
-          size={12}
-        />
-      ),
-      label: "Deposit",
-    },
-
-    withdrawal: {
-      color: "#f87171",
-      background:
-        "rgba(248,113,113,0.10)",
-      icon: (
-        <ArrowUpRight
-          size={12}
-        />
-      ),
-      label: "Withdrawal",
-    },
-
-    expense: {
-      color: "#facc15",
-      background:
-        "rgba(250,204,21,0.10)",
-      icon: (
-        <Receipt
-          size={12}
-        />
-      ),
-      label: "Others",
-    },
-  };
-
-  const current =
-    config[
-      type as keyof typeof config
-    ] || {
-      color:
-        "rgba(255,255,255,0.6)",
-      background:
-        "rgba(255,255,255,0.06)",
-      icon: (
-        <Activity
-          size={12}
-        />
-      ),
-      label: type,
-    };
-
-  return (
-    <span
-      style={{
-        width: "fit-content",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "5px",
-        padding:
-          "6px 10px",
-        borderRadius:
-          "999px",
-        background:
-          current.background,
-        color:
-          current.color,
-        fontSize: "10px",
-        fontWeight: 700,
-        letterSpacing:
-          "0.2px",
-        whiteSpace:
-          "nowrap",
-      }}
-    >
-      {current.icon}
-      {current.label}
-    </span>
-  );
-}
-
-function StatusBadge({
-  status,
-}: {
-  status: string;
-}) {
-  const normalized =
-    status?.toLowerCase();
-
-  const config = {
-    completed: {
-      color: "#34d399",
-      background:
-        "rgba(52,211,153,0.08)",
-      icon: (
-        <CheckCircle2
-          size={12}
-        />
-      ),
-    },
-
-    pending: {
-      color: "#facc15",
-      background:
-        "rgba(250,204,21,0.08)",
-      icon: (
-        <Clock3
-          size={12}
-        />
-      ),
-    },
-
-    cancelled: {
-      color: "#f87171",
-      background:
-        "rgba(248,113,113,0.08)",
-      icon: (
-        <XCircle
-          size={12}
-        />
-      ),
-    },
-  };
-
-  const current =
-    config[
-      normalized as keyof typeof config
-    ] || {
-      color:
-        "rgba(255,255,255,0.6)",
-      background:
-        "rgba(255,255,255,0.06)",
-      icon: (
-        <Activity
-          size={12}
-        />
-      ),
-    };
-
-  return (
-    <span
-      style={{
-        width: "fit-content",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "5px",
-        padding:
-          "6px 10px",
-        borderRadius:
-          "999px",
-        background:
-          current.background,
-        color:
-          current.color,
-        fontSize: "10px",
-        fontWeight: 600,
-        textTransform:
-          "capitalize",
-        whiteSpace:
-          "nowrap",
-      }}
-    >
-      {current.icon}
-      {normalized ||
-        "unknown"}
-    </span>
-  );
-}
-
-/* =========================================================
-   STYLES
-========================================================= */
-
-const pageStyle = {
-  minHeight: "100vh",
-  background:
-    "radial-gradient(circle at top right, rgba(255,255,255,0.035), transparent 32%), #050505",
-  color: "white",
-  padding:
-    "34px 25px 60px",
-};
-
-const containerStyle = {
-  maxWidth: "1450px",
-  margin: "0 auto",
-};
-
-const headerStyle = {
-  display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems: "flex-end",
-  gap: "25px",
-  marginBottom: "28px",
-};
-
-const titleRow = {
-  display: "flex",
-  alignItems: "center",
-  gap: "13px",
-};
-
-const titleIcon = {
-  width: "43px",
-  height: "43px",
-  borderRadius: "13px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  background:
-    "rgba(255,255,255,0.07)",
-  border:
-    "1px solid rgba(255,255,255,0.10)",
-  color:
-    "rgba(255,255,255,0.9)",
-};
-
-const headerButtons = {
-  display: "flex",
-  alignItems: "center",
-  gap: "9px",
-  flexWrap: "wrap" as const,
-  justifyContent: "flex-end",
-};
-
-const backButton = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-  marginBottom: "20px",
-  padding:
-    "8px 12px",
-  borderRadius: "10px",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-  background:
-    "rgba(255,255,255,0.035)",
-  color:
-    "rgba(255,255,255,0.65)",
-  cursor: "pointer",
-  fontSize: "12px",
-};
-
-const eyebrowStyle = {
-  margin: 0,
-  color:
-    "rgba(255,255,255,0.38)",
-  fontSize: "10px",
-  letterSpacing: "3.5px",
-  fontWeight: 700,
-};
-
-const titleStyle = {
-  margin:
-    "5px 0 0",
-  fontSize: "34px",
-  lineHeight: 1.1,
-  letterSpacing:
-    "-1.5px",
-};
-
-const subtitleStyle = {
-  margin:
-    "12px 0 0 56px",
-  color:
-    "rgba(255,255,255,0.42)",
-  fontSize: "13px",
-};
-
-const primaryButton = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  gap: "8px",
-  padding:
-    "11px 15px",
-  borderRadius: "13px",
-  border:
-    "1px solid rgba(255,255,255,0.18)",
-  background: "white",
-  color: "black",
-  cursor: "pointer",
-  fontWeight: 700,
-  fontSize: "12px",
-};
-
-const secondaryButton = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  gap: "8px",
-  padding:
-    "11px 14px",
-  borderRadius: "13px",
-  border:
-    "1px solid rgba(255,255,255,0.09)",
-  background:
-    "rgba(255,255,255,0.045)",
-  color: "white",
-  cursor: "pointer",
-  fontWeight: 600,
-  fontSize: "12px",
-};
-
-const errorBox = {
-  display: "flex",
-  alignItems: "center",
-  gap: "10px",
-  marginBottom: "18px",
-  padding:
-    "13px 15px",
-  borderRadius: "13px",
-  background:
-    "rgba(248,113,113,0.07)",
-  border:
-    "1px solid rgba(248,113,113,0.17)",
-  color: "#f87171",
-  fontSize: "12px",
-};
-
-const errorClose = {
-  marginLeft: "auto",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  width: "27px",
-  height: "27px",
-  border: "none",
-  borderRadius: "8px",
-  background:
-    "rgba(255,255,255,0.05)",
-  color: "rgba(255,255,255,0.7)",
-  cursor: "pointer",
-};
-
-const summaryGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "repeat(4, minmax(0, 1fr))",
-  gap: "14px",
-  marginBottom: "18px",
-};
-
-const summaryCard = {
-  padding: "20px",
-  borderRadius: "20px",
-  background:
-    "linear-gradient(145deg, rgba(255,255,255,0.065), rgba(255,255,255,0.022))",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-  boxShadow:
-    "0 15px 45px rgba(0,0,0,0.18)",
-};
-
-const summaryIcon = {
-  width: "37px",
-  height: "37px",
-  borderRadius: "11px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  marginBottom: "16px",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-};
-
-const cardLabel = {
-  margin: 0,
-  color:
-    "rgba(255,255,255,0.38)",
-  fontSize: "10px",
-  letterSpacing: "1.4px",
-  textTransform:
-    "uppercase" as const,
-  fontWeight: 700,
-};
-
-const summaryValue = {
-  margin:
-    "7px 0 0",
-  fontSize: "24px",
-  lineHeight: 1.15,
-  letterSpacing:
-    "-0.5px",
-};
-
-const sectionStyle = {
-  padding: "24px",
-  borderRadius: "24px",
-  background:
-    "rgba(255,255,255,0.035)",
-  border:
-    "1px solid rgba(255,255,255,0.075)",
-};
-
-const sectionHeader = {
-  display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems: "flex-start",
-  gap: "20px",
-  marginBottom: "20px",
-};
-
-const sectionLabelRow = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-};
-
-const sectionLabelDot = {
-  width: "5px",
-  height: "5px",
-  borderRadius: "50%",
-  background:
-    "rgba(255,255,255,0.45)",
-};
-
-const sectionTitle = {
-  margin:
-    "7px 0 0",
-  fontSize: "22px",
-  letterSpacing:
-    "-0.5px",
-};
-
-const sectionSubtitle = {
-  margin:
-    "6px 0 0",
-  color:
-    "rgba(255,255,255,0.32)",
-  fontSize: "12px",
-};
-
-const recordBadge = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-  padding:
-    "8px 11px",
-  borderRadius: "10px",
-  background:
-    "rgba(255,255,255,0.045)",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-  color:
-    "rgba(255,255,255,0.45)",
-  fontSize: "11px",
-  whiteSpace:
-    "nowrap" as const,
-};
-
-const filterBar = {
-  display: "flex",
-  alignItems: "center",
-  gap: "9px",
-  marginBottom: "17px",
-  padding:
-    "10px",
-  borderRadius: "15px",
-  background:
-    "rgba(0,0,0,0.18)",
-  border:
-    "1px solid rgba(255,255,255,0.055)",
-};
-
-const searchWrapper = {
-  position: "relative" as const,
-  flex: 1,
-  minWidth: "220px",
-};
-
-const searchIcon = {
-  position: "absolute" as const,
-  left: "12px",
-  top: "50%",
-  transform:
-    "translateY(-50%)",
-  color:
-    "rgba(255,255,255,0.3)",
-  pointerEvents:
-    "none" as const,
-};
-
-const searchInput = {
-  width: "100%",
-  padding:
-    "10px 38px",
-  borderRadius: "10px",
-  border:
-    "1px solid rgba(255,255,255,0.07)",
-  background:
-    "rgba(255,255,255,0.035)",
-  color: "white",
-  outline: "none",
-  fontSize: "12px",
-};
-
-const clearSearch = {
-  position: "absolute" as const,
-  right: "8px",
-  top: "50%",
-  transform:
-    "translateY(-50%)",
-  width: "25px",
-  height: "25px",
-  border: "none",
-  borderRadius: "7px",
-  background:
-    "rgba(255,255,255,0.06)",
-  color:
-    "rgba(255,255,255,0.55)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  cursor: "pointer",
-};
-
-const filterControl = {
-  display: "flex",
-  alignItems: "center",
-  gap: "7px",
-  padding:
-    "0 10px",
-  color:
-    "rgba(255,255,255,0.35)",
-};
-
-const filterSelect = {
-  border: "none",
-  outline: "none",
-  background:
-    "transparent",
-  color:
-    "rgba(255,255,255,0.7)",
-  cursor: "pointer",
-  fontSize: "11px",
-};
-
-const tableWrapper = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap: "7px",
-  overflowX:
-    "auto" as const,
-};
-
-const tableHeader = {
-  minWidth: "1250px",
-  display: "grid",
-  gridTemplateColumns:
-    "1fr 1.5fr 1fr 1.7fr 1fr 1.45fr 0.75fr",
-  gap: "15px",
-  padding:
-    "9px 15px",
-  color:
-    "rgba(255,255,255,0.27)",
-  fontSize: "9px",
-  letterSpacing: "1.2px",
-  fontWeight: 700,
-};
-
-const tableRow = {
-  minWidth: "1250px",
-  display: "grid",
-  gridTemplateColumns:
-    "1fr 1.5fr 1fr 1.7fr 1fr 1.45fr 0.75fr",
-  gap: "15px",
-  alignItems: "center",
-  padding:
-    "15px",
-  borderRadius: "15px",
-  background:
-    "rgba(0,0,0,0.20)",
-  border:
-    "1px solid rgba(255,255,255,0.055)",
-};
-
-const memberNameStyle = {
-  fontSize: "12px",
-  fontWeight: 650,
-};
-
-const mutedText = {
-  margin:
-    "4px 0 0",
-  color:
-    "rgba(255,255,255,0.24)",
-  fontSize: "9px",
-};
-
-const expenseSource = {
-  margin:
-    "4px 0 0",
-  color:
-    "rgba(250,204,21,0.75)",
-  fontSize: "9px",
-};
-
-const amountStyle = {
-  fontSize: "12px",
-  fontWeight: 650,
-};
-
-const descriptionText = {
-  display: "block",
-  color:
-    "rgba(255,255,255,0.48)",
-  fontSize: "11px",
-  whiteSpace:
-    "nowrap" as const,
-  overflow: "hidden",
-  textOverflow:
-    "ellipsis",
-};
-
-const dateText = {
-  color:
-    "rgba(255,255,255,0.35)",
-  fontSize: "10px",
-  lineHeight: 1.4,
-};
-
-const actions = {
-  display: "flex",
-  alignItems: "center",
-  gap: "6px",
-};
-
-const iconButton = {
-  width: "32px",
-  height: "32px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  borderRadius: "9px",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-  background:
-    "rgba(255,255,255,0.045)",
-  color:
-    "rgba(255,255,255,0.75)",
-  cursor: "pointer",
-};
-
-const deleteIconButton = {
-  ...iconButton,
-  color: "#f87171",
-  border:
-    "1px solid rgba(248,113,113,0.14)",
-  background:
-    "rgba(248,113,113,0.06)",
-};
-
-const emptyState = {
-  minHeight: "300px",
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  alignItems: "center",
-  justifyContent:
-    "center",
-  gap: "8px",
-  color:
-    "rgba(255,255,255,0.35)",
-};
-
-const emptyIcon = {
-  width: "58px",
-  height: "58px",
-  borderRadius: "17px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  marginBottom: "5px",
-  background:
-    "rgba(255,255,255,0.05)",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-  color:
-    "rgba(255,255,255,0.5)",
-};
-
-const emptyTitle = {
-  margin: "4px 0 0",
-  color:
-    "rgba(255,255,255,0.7)",
-  fontSize: "15px",
-};
-
-const emptyText = {
-  margin:
-    "0 0 10px",
-  color:
-    "rgba(255,255,255,0.3)",
-  fontSize: "11px",
-};
-
-const loadingStyle = {
-  minHeight: "100vh",
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  alignItems: "center",
-  justifyContent:
-    "center",
-  gap: "12px",
-  color:
-    "rgba(255,255,255,0.45)",
-  fontSize: "12px",
-};
-
-const loadingSpinner = {
-  width: "40px",
-  height: "40px",
-  borderRadius: "13px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  background:
-    "rgba(255,255,255,0.05)",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-};
-
-const modalOverlay = {
-  position: "fixed" as const,
-  inset: 0,
-  zIndex: 9999,
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  padding: "20px",
-  background:
-    "rgba(0,0,0,0.78)",
-  backdropFilter:
-    "blur(16px)",
-};
-
-const modal = {
-  width: "100%",
-  maxWidth: "570px",
-  maxHeight: "90vh",
-  overflowY:
-    "auto" as const,
-  padding: "28px",
-  borderRadius: "25px",
-  background:
-    "linear-gradient(145deg, #151515, #0e0e0e)",
-  border:
-    "1px solid rgba(255,255,255,0.11)",
-  boxShadow:
-    "0 35px 120px rgba(0,0,0,0.7)",
-};
-
-const modalHeader = {
-  display: "flex",
-  justifyContent:
-    "space-between",
-  alignItems:
-    "flex-start",
-  gap: "20px",
-  marginBottom: "26px",
-};
-
-const modalTitle = {
-  margin:
-    "8px 0 0",
-  fontSize: "25px",
-  letterSpacing:
-    "-0.7px",
-};
-
-const modalSubtitle = {
-  margin:
-    "6px 0 0",
-  color:
-    "rgba(255,255,255,0.38)",
-  fontSize: "12px",
-  lineHeight: 1.5,
-};
-
-const closeButton = {
-  width: "35px",
-  height: "35px",
-  flexShrink: 0,
-  borderRadius: "50%",
-  border:
-    "1px solid rgba(255,255,255,0.09)",
-  background:
-    "rgba(255,255,255,0.05)",
-  color:
-    "rgba(255,255,255,0.8)",
-  cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-};
-
-const formGroup = {
-  display: "flex",
-  flexDirection:
-    "column" as const,
-  gap: "8px",
-  marginBottom: "16px",
-};
-
-const formLabel = {
-  color:
-    "rgba(255,255,255,0.62)",
-  fontSize: "11px",
-  fontWeight: 650,
-};
-
-const formInput = {
-  width: "100%",
-  boxSizing:
-    "border-box" as const,
-  padding:
-    "13px 14px",
-  borderRadius: "12px",
-  border:
-    "1px solid rgba(255,255,255,0.09)",
-  background:
-    "rgba(255,255,255,0.045)",
-  color: "white",
-  outline: "none",
-  fontSize: "13px",
-};
-
-const inputWithPrefix = {
-  display: "flex",
-  alignItems: "center",
-  width: "100%",
-  borderRadius: "12px",
-  border:
-    "1px solid rgba(255,255,255,0.09)",
-  background:
-    "rgba(255,255,255,0.045)",
-  overflow: "hidden",
-};
-
-const currencyPrefix = {
-  padding:
-    "0 0 0 14px",
-  color:
-    "rgba(255,255,255,0.4)",
-  fontSize: "14px",
-};
-
-const amountInput = {
-  flex: 1,
-  minWidth: 0,
-  padding:
-    "13px 14px 13px 7px",
-  border: "none",
-  outline: "none",
-  background:
-    "transparent",
-  color: "white",
-  fontSize: "13px",
-};
-
-const sourceGrid = {
-  display: "grid",
-  gridTemplateColumns:
-    "1fr 1fr",
-  gap: "8px",
-};
-
-const sourceButton = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent:
-    "center",
-  gap: "8px",
-  padding: "13px 10px",
-  borderRadius: "12px",
-  border:
-    "1px solid rgba(255,255,255,0.08)",
-  background:
-    "rgba(255,255,255,0.035)",
-  color:
-    "rgba(255,255,255,0.55)",
-  cursor: "pointer",
-  fontSize: "11px",
-  fontWeight: 600,
-};
-
-const sourceButtonActive = {
-  background:
-    "rgba(255,255,255,0.10)",
-  color: "white",
-  border:
-    "1px solid rgba(255,255,255,0.20)",
-};
-
-const sourceIcon = {
-  fontSize: "14px",
-};
-
-const hintBox = {
-  display: "flex",
-  alignItems:
-    "flex-start",
-  gap: "9px",
-  padding:
-    "12px 13px",
-  marginTop: "2px",
-  borderRadius: "12px",
-  background:
-    "rgba(250,204,21,0.055)",
-  border:
-    "1px solid rgba(250,204,21,0.11)",
-  color:
-    "rgba(255,255,255,0.45)",
-  fontSize: "11px",
-  lineHeight: 1.5,
-};
-
-const modalActions = {
-  display: "flex",
-  gap: "9px",
-  marginTop: "23px",
-};
-
-const cancelButton = {
-  padding:
-    "12px 18px",
-  borderRadius: "13px",
-  border:
-    "1px solid rgba(255,255,255,0.09)",
-  background:
-    "rgba(255,255,255,0.045)",
-  color: "white",
-  cursor: "pointer",
-  fontSize: "12px",
-  fontWeight: 600,
-};
