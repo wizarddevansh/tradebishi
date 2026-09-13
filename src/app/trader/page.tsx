@@ -698,7 +698,7 @@ export default function TraderPage() {
             trader_id: userId,
           })
           .select(
-            "id,trade_name,invested_amount,approx_return,status,trade_date,notes,trader_id"
+            "id,trade_name,invested_amount,approx_return,status,trade_date,notes,trader_id, is_closed"
           )
           .single();
 
