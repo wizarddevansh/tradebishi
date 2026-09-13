@@ -231,6 +231,42 @@ export default function MemberPage() {
   const [tradeFiles, setTradeFiles] =
     useState<TradeFile[]>([]);
 
+  async function openTradeFile(file: TradeFile) {
+    try {
+      setError("");
+
+      const marker = "/storage/v1/object/public/trade-photos/";
+      const markerIndex = file.file_url.indexOf(marker);
+
+      if (markerIndex === -1) {
+        window.open(file.file_url, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      const filePath = decodeURIComponent(
+        file.file_url.slice(markerIndex + marker.length)
+      );
+
+      const { data, error: signedUrlError } =
+        await supabase.storage
+          .from("trade-photos")
+          .createSignedUrl(filePath, 60 * 60);
+
+      if (signedUrlError || !data?.signedUrl) {
+        throw signedUrlError || new Error("Unable to create a secure file URL.");
+      }
+
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("TradeBishi member file open error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to open this document."
+      );
+    }
+  }
+
   const [tradeLogs, setTradeLogs] =
     useState<TradeLog[]>([]);
 
@@ -2715,14 +2751,13 @@ export default function MemberPage() {
                       selectedTrade.id
                   )
                   .map((file) => (
-                    <a
+                    <button
+                      type="button"
                       className="tb-file"
                       key={file.id}
-                      href={
-                        file.file_url
+                      onClick={() =>
+                        openTradeFile(file)
                       }
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       <FileText
                         size={16}
@@ -2737,7 +2772,7 @@ export default function MemberPage() {
                       <ChevronRight
                         size={14}
                       />
-                    </a>
+                    </button>
                   ))}
               </div>
             )}

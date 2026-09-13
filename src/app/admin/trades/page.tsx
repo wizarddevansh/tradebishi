@@ -1049,6 +1049,45 @@ export default function AdminTradesPage() {
     }
   }
 
+  async function openTradeFile(file: TradeFile) {
+    try {
+      setError("");
+
+      const marker = "/trade-photos/";
+      const markerIndex = file.file_url.indexOf(marker);
+
+      if (markerIndex === -1) {
+        window.open(file.file_url, "_blank", "noopener,noreferrer");
+        return;
+      }
+
+      const storagePath = decodeURIComponent(
+        file.file_url.slice(markerIndex + marker.length),
+      );
+
+      const { data, error: signedUrlError } =
+        await supabase.storage
+          .from("trade-photos")
+          .createSignedUrl(storagePath, 3600);
+
+      if (signedUrlError) throw signedUrlError;
+
+      if (!data?.signedUrl) {
+        throw new Error("Unable to create a secure file URL.");
+      }
+
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("TradeBishi file open error:", err);
+      setError(
+        getErrorMessage(
+          err,
+          "Unable to open this trade file.",
+        ),
+      );
+    }
+  }
+
   async function deleteFile(file: TradeFile) {
     if (!selectedTrade) return;
 
@@ -2305,16 +2344,15 @@ export default function AdminTradesPage() {
                               )}
                             </div>
 
-                            <a
-                              href={
-                                file.file_url
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openTradeFile(file)
                               }
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-1 block truncate text-xs text-zinc-600 hover:text-white"
+                              className="mt-1 block max-w-full truncate text-left text-xs text-zinc-600 hover:text-white"
                             >
                               Open file
-                            </a>
+                            </button>
                           </div>
 
                           <button

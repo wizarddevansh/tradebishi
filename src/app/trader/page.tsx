@@ -1006,6 +1006,8 @@ export default function TraderPage() {
         throw uploadError;
       }
 
+      // Keep the existing database format for compatibility.
+      // The bucket is private, so viewing is handled with signed URLs.
       const {
         data: publicUrlData,
       } = supabase.storage
@@ -1065,6 +1067,61 @@ export default function TraderPage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function getSignedTradeFileUrl(file: TradeFile) {
+    const bucketMarker = `/storage/v1/object/public/${TRADE_FILE_BUCKET}/`;
+    const markerIndex = file.file_url.indexOf(bucketMarker);
+
+    if (markerIndex === -1) {
+      return file.file_url;
+    }
+
+    const filePath = decodeURIComponent(
+      file.file_url.slice(
+        markerIndex + bucketMarker.length
+      )
+    );
+
+    const { data, error } = await supabase.storage
+      .from(TRADE_FILE_BUCKET)
+      .createSignedUrl(filePath, 60 * 60);
+
+    if (error || !data?.signedUrl) {
+      throw error || new Error("Unable to create a secure file URL.");
+    }
+
+    return data.signedUrl;
+  }
+
+  async function viewTradeFile(file: TradeFile) {
+    try {
+      setError("");
+      const signedUrl = await getSignedTradeFileUrl(file);
+      setPreviewUrl(signedUrl);
+    } catch (err) {
+      console.error("TradeBishi file preview error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to open this trade file."
+      );
+    }
+  }
+
+  async function openTradeFile(file: TradeFile) {
+    try {
+      setError("");
+      const signedUrl = await getSignedTradeFileUrl(file);
+      window.open(signedUrl, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("TradeBishi file open error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to open this trade file."
+      );
     }
   }
 
@@ -2764,9 +2821,7 @@ export default function TraderPage() {
                           <button
                             type="button"
                             onClick={() =>
-                              setPreviewUrl(
-                                file.file_url
-                              )
+                              viewTradeFile(file)
                             }
                             style={fileAction}
                           >
@@ -2777,19 +2832,18 @@ export default function TraderPage() {
                           </button>
                         )}
 
-                        <a
-                          href={
-                            file.file_url
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openTradeFile(file)
                           }
-                          target="_blank"
-                          rel="noreferrer"
                           style={fileAction}
                         >
                           <FileText
                             size={11}
                           />
                           Open
-                        </a>
+                        </button>
 
                         <button
                           type="button"
