@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -43,9 +44,6 @@ export default function LoginPage() {
     }
 
     // 2. Check whether this user is a MEMBER
-    // Members created from Admin > Members are linked
-    // through members.user_id and do not need a profiles row.
-
     const { data: member, error: memberError } = await supabase
       .from("members")
       .select("id, full_name, status")
@@ -85,7 +83,6 @@ export default function LoginPage() {
     }
 
     // 4. If not a member, check profiles for Admin/Trader
-
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id, full_name, role")
@@ -138,6 +135,34 @@ export default function LoginPage() {
 
     setLoading(false);
   }
+
+  async function handleGoogleLogin() {
+    setGoogleLoading(true);
+    setError("");
+
+    const supabase = createClient();
+
+    const redirectUrl = `${window.location.origin}/auth/callback`;
+
+    const { error: googleError } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: redirectUrl,
+      },
+    });
+
+    if (googleError) {
+      console.error("Google login error:", googleError);
+
+      setError(
+        "Unable to start Google login. Please try again."
+      );
+
+      setGoogleLoading(false);
+    }
+  }
+
+  const anyLoading = loading || googleLoading;
 
   return (
     <main
@@ -198,6 +223,72 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {/* Google Login */}
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={anyLoading}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "12px",
+            padding: "15px",
+            borderRadius: "14px",
+            border: "1px solid rgba(255,255,255,0.12)",
+            background: "rgba(255,255,255,0.07)",
+            color: "white",
+            fontSize: "15px",
+            fontWeight: 600,
+            cursor: anyLoading ? "not-allowed" : "pointer",
+            opacity: anyLoading ? 0.7 : 1,
+          }}
+        >
+          <span
+            style={{
+              fontSize: "19px",
+              fontWeight: 700,
+              lineHeight: 1,
+            }}
+          >
+            G
+          </span>
+
+          {googleLoading ? "Connecting to Google..." : "Continue with Google"}
+        </button>
+
+        {/* Divider */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            margin: "24px 0",
+            color: "rgba(255,255,255,0.3)",
+            fontSize: "12px",
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              height: "1px",
+              background: "rgba(255,255,255,0.1)",
+            }}
+          />
+
+          OR
+
+          <div
+            style={{
+              flex: 1,
+              height: "1px",
+              background: "rgba(255,255,255,0.1)",
+            }}
+          />
+        </div>
+
+        {/* Existing Email/Password Login */}
         <form
           onSubmit={handleLogin}
           style={{
@@ -225,6 +316,7 @@ export default function LoginPage() {
               placeholder="Email address"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
+              disabled={anyLoading}
               style={inputStyle}
             />
           </div>
@@ -248,6 +340,7 @@ export default function LoginPage() {
               placeholder="Password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              disabled={anyLoading}
               style={inputStyle}
             />
           </div>
@@ -269,7 +362,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={anyLoading}
             style={{
               marginTop: "5px",
               display: "flex",
@@ -283,8 +376,8 @@ export default function LoginPage() {
               color: "black",
               fontSize: "15px",
               fontWeight: 600,
-              cursor: loading ? "not-allowed" : "pointer",
-              opacity: loading ? 0.7 : 1,
+              cursor: anyLoading ? "not-allowed" : "pointer",
+              opacity: anyLoading ? 0.7 : 1,
             }}
           >
             {loading ? "Signing in..." : "Sign In"}
