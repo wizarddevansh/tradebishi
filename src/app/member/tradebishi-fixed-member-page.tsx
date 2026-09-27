@@ -3435,6 +3435,24 @@ export default function MemberPage() {
                 );
               }
             )}
+
+            <button
+              type="button"
+              className="tb-nav-button"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                router.push("/member/chat");
+              }}
+            >
+              <span className="tb-nav-icon">
+                <MessageCircle
+                  size={18}
+                  strokeWidth={2}
+                />
+              </span>
+
+              <span>Chat</span>
+            </button>
           </nav>
 
           <div className="tb-sidebar-spacer" />
