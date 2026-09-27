@@ -14,6 +14,7 @@ import {
   Receipt,
   ChevronRight,
   BarChart3,
+  MessageCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
@@ -402,10 +403,38 @@ export default function AdminDashboard() {
             </p>
           </div>
 
-          <button
-            onClick={loadDashboard}
-            disabled={refreshing}
+          <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              onClick={() => router.push("/admin/chat")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 14px",
+                borderRadius: "10px",
+                border: "1px solid rgba(59,130,246,0.25)",
+                background: "rgba(59,130,246,0.10)",
+                color: "#93c5fd",
+                cursor: "pointer",
+                fontWeight: 700,
+              }}
+              title="Open TradeBishi Chat"
+            >
+              <MessageCircle size={16} />
+              Chat
+            </button>
+
+            <button
+              onClick={loadDashboard}
+              disabled={refreshing}
+              style={{
               display: "flex",
               alignItems: "center",
               gap: "8px",
@@ -424,8 +453,9 @@ export default function AdminDashboard() {
                 animation: refreshing ? "spin 1s linear infinite" : "none",
               }}
             />
-            Refresh
-          </button>
+              Refresh
+            </button>
+          </div>
         </div>
 
         {/* Main stats */}
