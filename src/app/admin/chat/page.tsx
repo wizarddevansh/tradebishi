@@ -13,6 +13,8 @@ type DbMessage = {
   id: string;
   room_id: string;
   sender_id: string;
+  sender_name: string | null;
+  sender_role: string | null;
   message: string;
   created_at: string;
 };
@@ -56,20 +58,36 @@ function formatMessages(
   messages: DbMessage[],
   currentUserId: string
 ): ChatMessageData[] {
-  return messages.map((message) => ({
-    id: message.id,
-    sender:
-      message.sender_id === currentUserId ? "You" : "TradeBishi User",
-    role: message.sender_id === currentUserId ? "ADMIN" : "MEMBER",
-    text: message.message,
-    time: message.created_at,
-    mine: message.sender_id === currentUserId,
-  }));
+  return messages.map((message) => {
+    const sender =
+      message.sender_id === currentUserId
+        ? "You"
+        : message.sender_name || "TradeBishi User";
+    const text = message.message;
+    const time = message.created_at;
+
+    return {
+      id: message.id,
+      senderId: message.sender_id,
+      senderName: sender,
+      sender,
+      role:
+        message.sender_role === "ADMIN"
+          ? "ADMIN"
+          : message.sender_role === "TRADER"
+            ? "TRADER"
+            : "MEMBER",
+      message: text,
+      text,
+      createdAt: time,
+      time,
+      isOwn: message.sender_id === currentUserId,
+    };
+  });
 }
 
 export default function AdminChatPage() {
   const supabase = createClient();
-
   const currentRole: ChatRole = "ADMIN";
 
   const [selectedRoom, setSelectedRoom] = useState("community");
@@ -95,10 +113,7 @@ export default function AdminChatPage() {
         return;
       }
 
-      const userId = user.id;
-
-      // Keep TypeScript aware that this is definitely a string
-      const currentUserId = userId;
+      const currentUserId = user.id;
 
       const { data: communityRoom, error: roomError } = await supabase
         .from("chat_rooms")
@@ -120,7 +135,9 @@ export default function AdminChatPage() {
 
       const { data, error } = await supabase
         .from("chat_messages")
-        .select("*")
+        .select(
+          "id, room_id, sender_id, sender_name, sender_role, message, created_at"
+        )
         .eq("room_id", communityRoom.id)
         .order("created_at", { ascending: true });
 
@@ -128,10 +145,7 @@ export default function AdminChatPage() {
         console.error("Chat messages error:", error);
       } else if (!cancelled) {
         setMessages(
-          formatMessages(
-            (data ?? []) as DbMessage[],
-            currentUserId
-          )
+          formatMessages((data ?? []) as DbMessage[], currentUserId)
         );
       }
 
@@ -155,16 +169,11 @@ export default function AdminChatPage() {
                 (message) => message.id === newMessage.id
               );
 
-              if (alreadyExists) {
-                return previous;
-              }
+              if (alreadyExists) return previous;
 
               return [
                 ...previous,
-                ...formatMessages(
-                  [newMessage],
-                  currentUserId
-                ),
+                ...formatMessages([newMessage], currentUserId),
               ];
             });
           }
@@ -187,7 +196,6 @@ export default function AdminChatPage() {
 
   async function handleSend(message: string) {
     const trimmed = message.trim();
-
     if (!trimmed) return;
 
     const {
@@ -210,9 +218,22 @@ export default function AdminChatPage() {
       return;
     }
 
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("full_name, role")
+      .eq("id", user.id)
+      .single();
+
+    if (profileError || !profile) {
+      console.error("Profile fetch error:", profileError);
+      return;
+    }
+
     const { error } = await supabase.from("chat_messages").insert({
       room_id: communityRoom.id,
       sender_id: user.id,
+      sender_name: profile.full_name,
+      sender_role: profile.role.toUpperCase(),
       message: trimmed,
     });
 
@@ -232,16 +253,8 @@ export default function AdminChatPage() {
 
       <ChatWindow
         room={selectedRoomData}
-        messages={
-          selectedRoom === "community"
-            ? messages
-            : []
-        }
-        onSend={
-          selectedRoom === "community"
-            ? handleSend
-            : async () => {}
-        }
+        messages={selectedRoom === "community" ? messages : []}
+        onSend={selectedRoom === "community" ? handleSend : async () => {}}
         currentRole={currentRole}
       />
 

@@ -22,6 +22,11 @@ export const metadata: Metadata = {
   description:
     "TradeBishi — intelligent investment tracking and portfolio management.",
   applicationName: "TradeBishi",
+  icons: {
+    icon: "/tradebishi-mark.png",
+    shortcut: "/tradebishi-mark.png",
+    apple: "/tradebishi-mark.png",
+  },
   keywords: [
     "TradeBishi",
     "investment tracking",
